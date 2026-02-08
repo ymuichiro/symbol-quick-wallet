@@ -1,0 +1,44 @@
+name: Reusable Publish To PyPI
+
+on:
+  workflow_call:
+    inputs:
+      version_tag:
+        description: "Release tag (for logs)"
+        required: true
+        type: string
+
+jobs:
+  build-and-publish:
+    name: Build and publish package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distributions
+        run: twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Release summary
+        run: |
+          echo "Published release for tag: ${{ inputs.version_tag }}"

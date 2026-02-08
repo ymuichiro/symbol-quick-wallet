@@ -1,0 +1,91 @@
+name: Main Release Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  create-release-tag:
+    name: Bump version and create tag
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bump patch version in pyproject.toml
+        id: bump
+        run: |
+          python << 'PY'
+          import os
+          from pathlib import Path
+          import re
+
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text(encoding="utf-8")
+          match = re.search(r'^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text, re.MULTILINE)
+          if not match:
+              raise SystemExit("Could not find semantic version in pyproject.toml")
+
+          major, minor, patch = map(int, match.groups())
+          new_version = f"{major}.{minor}.{patch + 1}"
+          new_text = text[:match.start()] + f'version = "{new_version}"' + text[match.end():]
+          pyproject.write_text(new_text, encoding="utf-8")
+
+          output_path = os.environ.get("GITHUB_OUTPUT")
+          if not output_path:
+              raise SystemExit("GITHUB_OUTPUT is not set")
+
+          with open(output_path, "a", encoding="utf-8") as fh:
+              fh.write(f"version={new_version}\n")
+              fh.write(f"tag=v{new_version}\n")
+          print(f"Bumped version to {new_version}")
+          PY
+
+      - name: Commit version bump and create tag
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
+          NEW_TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add pyproject.toml
+          git commit -m "chore(release): ${NEW_TAG} [skip ci]"
+
+          if git rev-parse "${NEW_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${NEW_TAG} already exists" >&2
+            exit 1
+          fi
+
+          git tag -a "${NEW_TAG}" -m "Release ${NEW_TAG}"
+          git push origin main
+          git push origin "${NEW_TAG}"
+
+  publish:
+    name: Publish package via reusable workflow
+    needs: create-release-tag
+    if: needs.create-release-tag.outputs.tag != ''
+    uses: ./.github/workflows/publish-pypi.yml
+    with:
+      version_tag: ${{ needs.create-release-tag.outputs.tag }}
+    secrets: inherit

@@ -44,17 +44,22 @@ from textual.widgets import (
 )
 
 from src.screens import (
+    AccountManagerScreen,
+    AddAccountScreen,
     AddAddressScreen,
     AddressBookScreen,
     AddressBookSelectorScreen,
     CommandSelectorScreen,
     CreateMosaicScreen,
+    DeleteAccountConfirmScreen,
+    EditAccountScreen,
     EditAddressScreen,
     ExportKeyScreen,
     FirstRunImportWalletScreen,
     FirstRunSetupScreen,
     HarvestingLinkScreen,
     HarvestingUnlinkScreen,
+    ImportAccountKeyScreen,
     ImportEncryptedKeyScreen,
     ImportWalletScreen,
     MosaicInputScreen,
@@ -65,6 +70,7 @@ from src.screens import (
     TransactionConfirmScreen,
     TransactionResultScreen,
 )
+from src.network import NetworkError
 from src.styles import CSS
 from src.transaction import TransactionManager
 from src.wallet import Wallet
@@ -178,8 +184,19 @@ class WalletApp(App):
         )
 
         try:
-            logger.info("[unlock_wallet] Loading wallet from storage")
-            self.wallet.load_wallet_from_storage(password)
+            logger.info("[unlock_wallet] Setting password and loading accounts")
+            self.wallet.password = password
+            accounts = self.wallet.get_accounts()
+            if accounts:
+                logger.info(
+                    f"[unlock_wallet] Found {len(accounts)} accounts, loading current"
+                )
+                self.wallet.load_current_account()
+            else:
+                logger.info(
+                    "[unlock_wallet] No accounts in registry, loading from legacy wallet"
+                )
+                self.wallet.load_wallet_from_storage(password)
             logger.info("[unlock_wallet] Wallet loaded successfully")
             self.is_authenticated = True
 
@@ -197,7 +214,9 @@ class WalletApp(App):
             self.password_retry_count = 0
 
             logger.info("[unlock_wallet] Showing success notification")
-            self.notify("Wallet unlocked successfully!", severity="information")
+            current_account = self.wallet.get_current_account()
+            label = current_account.label if current_account else "Wallet"
+            self.notify(f"{label} unlocked successfully!", severity="information")
 
             logger.info("[unlock_wallet] ========== UNLOCK WALLET SUCCESS ==========")
             logger.info("")
@@ -578,6 +597,7 @@ class WalletApp(App):
                     "  /transfer - 📤 Transfer",
                     "  /address_book - 📒 Address Book",
                     "  /history - 📜 History",
+                    "  /accounts - 👤 Account Manager",
                     "  /show_config - ⚙️ Show Config",
                     "  /network_testnet - 🌐 Network Testnet",
                     "  /network_mainnet - 🌐 Network Mainnet",
@@ -592,6 +612,7 @@ class WalletApp(App):
                 ("📤 Transfer", "transfer"),
                 ("📒 Address Book", "address_book"),
                 ("📜 History", "history"),
+                ("👤 Account Manager", "accounts"),
                 ("⚙️ Show Config", "show_config"),
                 ("🌐 Network Testnet", "network_testnet"),
                 ("🌐 Network Mainnet", "network_mainnet"),
@@ -704,6 +725,8 @@ class WalletApp(App):
             self.show_link_harvesting_dialog()
         elif normalized == "unlink_harvesting":
             self.show_unlink_harvesting_dialog()
+        elif normalized == "accounts":
+            self.show_account_manager()
         else:
             self.notify(f"Unknown command: /{normalized}", severity="warning")
 
@@ -919,7 +942,13 @@ class WalletApp(App):
 
             logger.info("[update_dashboard] Step 1: Updating wallet-info")
             try:
-                wallet_info.label = f"Address: {self.wallet.get_address()}"
+                current_account = self.wallet.get_current_account()
+                label = (
+                    current_account.label
+                    if current_account and current_account.label
+                    else "Account"
+                )
+                wallet_info.label = f"{label}: {self.wallet.get_address()}"
                 logger.info(
                     "[update_dashboard] Step 1: wallet-info updated successfully"
                 )
@@ -995,21 +1024,20 @@ class WalletApp(App):
                 logger.info(
                     "[update_dashboard] Step 3: balance-table updated successfully"
                 )
+            except NetworkError as e:
+                logger.error(
+                    f"[update_dashboard] Step 3: Network error: {e.message}",
+                    exc_info=True,
+                )
+                balance_table.clear(columns=True)
+                balance_table.add_column("Error", key="error")
+                balance_table.add_row(f"Unable to fetch balance: {e.message}")
             except Exception as e:
                 logger.error(
                     f"[update_dashboard] Step 3: ERROR updating balance-table: {e}",
                     exc_info=True,
                 )
                 error_msg = str(e)
-                logger.info(f"[update_dashboard] Error message: {error_msg}")
-                if "timeout" in error_msg.lower():
-                    error_msg = "Connection timeout. Node may be unavailable."
-                elif "cannot connect" in error_msg.lower():
-                    error_msg = (
-                        "Cannot connect to node. Check your network and node URL."
-                    )
-                elif "http error" in error_msg.lower():
-                    error_msg = f"Node returned error: {error_msg}"
 
                 balance_table.clear(columns=True)
                 balance_table.add_column("Error", key="error")
@@ -1143,15 +1171,10 @@ class WalletApp(App):
                     f"{amount_value / 1_000_000:,.6f} XYM",
                     "Received" if direction == "incoming" else "Sent",
                 )
+        except NetworkError as e:
+            table.add_row("[red]Error[/red]", e.message, "", "")
         except Exception as e:
-            error_msg = str(e)
-            if "timeout" in error_msg.lower():
-                error_msg = "Connection timeout. Node may be unavailable."
-            elif "cannot connect" in error_msg.lower():
-                error_msg = "Cannot connect to node. Check your network and node URL."
-            elif "http error" in error_msg.lower():
-                error_msg = f"Node returned error: {error_msg}"
-            table.add_row("[red]Error[/red]", error_msg, "", "")
+            table.add_row("[red]Error[/red]", str(e), "", "")
 
     def update_settings(self):
         # Settings tab has been removed; keep this method as a compatibility no-op.
@@ -1454,7 +1477,9 @@ class WalletApp(App):
         def tick() -> None:
             if not self._transfer_loading_active:
                 return
-            self._transfer_loading_step = (self._transfer_loading_step + 1) % len(frames)
+            self._transfer_loading_step = (self._transfer_loading_step + 1) % len(
+                frames
+            )
             frame = frames[self._transfer_loading_step]
             result_widget.update(f"[yellow]{base_text} {frame}[/yellow]")
 
@@ -1487,9 +1512,13 @@ class WalletApp(App):
                     timeout_seconds=180,
                     poll_interval_seconds=3,
                 )
-                self.call_from_thread(self._on_transaction_send_finished, signed, status, None)
+                self.call_from_thread(
+                    self._on_transaction_send_finished, signed, status, None
+                )
             except Exception as e:
-                self.call_from_thread(self._on_transaction_send_finished, None, None, str(e))
+                self.call_from_thread(
+                    self._on_transaction_send_finished, None, None, str(e)
+                )
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1513,7 +1542,9 @@ class WalletApp(App):
             result.update(f"[red]Transaction failed: {code_text}[/red]")
             return
 
-        self.push_screen(TransactionResultScreen(signed["hash"], self.wallet.network_name))
+        self.push_screen(
+            TransactionResultScreen(signed["hash"], self.wallet.network_name)
+        )
         self.mosaics = []
         self.update_mosaics_table()
         result.update("[green]Transaction confirmed and sent successfully![/green]")
@@ -1626,6 +1657,74 @@ class WalletApp(App):
 
     def show_unlink_harvesting_dialog(self):
         self.push_screen(HarvestingUnlinkScreen())
+
+    def show_account_manager(self):
+        accounts = self.wallet.get_accounts()
+        current_index = self.wallet.get_current_account_index()
+        self.push_screen(AccountManagerScreen(accounts, current_index))
+
+    def on_account_manager_screen_account_selected(self, event):
+        if self.wallet.switch_account(event.index):
+            self.wallet.load_current_account()
+            self.update_dashboard()
+            self.update_address_book()
+            current_account = self.wallet.get_current_account()
+            label = current_account.label if current_account else "Unknown"
+            self.notify(f"Switched to: {label}", severity="information")
+
+    def on_account_manager_screen_add_account_requested(self, event):
+        self.push_screen(AddAccountScreen())
+
+    def on_account_manager_screen_edit_account_requested(self, event):
+        self.push_screen(
+            EditAccountScreen(event.index, event.label, event.address_book_shared)
+        )
+
+    def on_account_manager_screen_delete_account_requested(self, event):
+        accounts = self.wallet.get_accounts()
+        if event.index < len(accounts):
+            acc = accounts[event.index]
+            self.push_screen(
+                DeleteAccountConfirmScreen(event.index, acc.label, acc.address)
+            )
+
+    def on_add_account_screen_create_account_requested(self, event):
+        try:
+            self.wallet.create_account(event.label, event.address_book_shared)
+            self.notify("New account created successfully!", severity="information")
+        except Exception as e:
+            self.notify(f"Error creating account: {str(e)}", severity="error")
+
+    def on_add_account_screen_import_account_requested(self, event):
+        self.push_screen(ImportAccountKeyScreen(event.label, event.address_book_shared))
+
+    def on_import_account_key_screen_import_key_submitted(self, event):
+        try:
+            self.wallet.import_account(
+                event.private_key, event.label, event.address_book_shared
+            )
+            self.notify("Account imported successfully!", severity="information")
+        except Exception as e:
+            self.notify(f"Error importing account: {str(e)}", severity="error")
+
+    def on_edit_account_screen_edit_account_submitted(self, event):
+        self.wallet.update_account_label(event.index, event.label)
+        self.wallet.update_account_address_book_shared(
+            event.index, event.address_book_shared
+        )
+        if event.index == self.wallet.get_current_account_index():
+            self.wallet.load_current_account()
+            self.update_address_book()
+        self.notify("Account updated successfully!", severity="information")
+
+    def on_delete_account_confirm_screen_delete_confirmed(self, event):
+        if self.wallet.delete_account(event.index):
+            self.wallet.load_current_account()
+            self.update_dashboard()
+            self.update_address_book()
+            self.notify("Account deleted successfully!", severity="information")
+        else:
+            self.notify("Cannot delete the last account", severity="warning")
 
     def on_export_key_dialog_submitted(self, event):
         try:
@@ -1994,6 +2093,13 @@ class WalletApp(App):
             )
             self.wallet.load_wallet_from_storage(password)
             logger.info("[finish_setup] Step 1: Wallet loaded successfully")
+            if not self.wallet.get_accounts():
+                logger.info(
+                    "[finish_setup] Migrating legacy wallet to accounts registry"
+                )
+                self.wallet._migrate_legacy_wallet_to_accounts()
+            if self.wallet.get_accounts():
+                self.wallet.load_current_account()
             self.is_authenticated = True
             logger.info(f"[finish_setup] is_authenticated now: {self.is_authenticated}")
         except Exception as e:

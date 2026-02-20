@@ -67,6 +67,7 @@ class CommandSelectorScreen(BaseModalScreen):
             ("/a", "📒 Address Book"),
             ("/history", "📜 History"),
             ("/h", "📜 History"),
+            ("/accounts", "👤 Account Manager"),
             ("/show_config", "⚙️ Show Config"),
             ("/network_testnet", "🌐 Network: Testnet"),
             ("/network_mainnet", "🌐 Network: Mainnet"),
@@ -259,7 +260,9 @@ class AddressBookScreen(BaseModalScreen):
             if address:
                 info = self.addresses[address]
                 self.post_message(
-                    self.EditAddress(address=address, name=info["name"], note=info["note"])
+                    self.EditAddress(
+                        address=address, name=info["name"], note=info["note"]
+                    )
                 )
         elif event.button.id == "delete-button":
             address = self._get_selected_address()
@@ -880,7 +883,9 @@ class PasswordScreen(BaseModalScreen):
                     "[PasswordScreen.on_input_submitted] Calling app to unlock wallet"
                 )
                 try:
-                    success = cast(AppWithWalletOps, self.app).unlock_wallet(password, self)
+                    success = cast(AppWithWalletOps, self.app).unlock_wallet(
+                        password, self
+                    )
                     logger.info(
                         f"[PasswordScreen.on_input_submitted] app.unlock_wallet() returned: {success}"
                     )
@@ -962,7 +967,9 @@ class PasswordScreen(BaseModalScreen):
             password_input = cast(Input, self.query_one("#password-input"))
             password = password_input.value
             if not password:
-                logger.warning("[PasswordScreen.on_button_pressed] Empty password, ignoring")
+                logger.warning(
+                    "[PasswordScreen.on_button_pressed] Empty password, ignoring"
+                )
                 return
             logger.info(
                 f"[PasswordScreen.on_button_pressed] Password length: {len(password) if password else 0}"
@@ -1007,7 +1014,9 @@ class PasswordScreen(BaseModalScreen):
                     logger.info(
                         "[PasswordScreen.on_button_pressed] Calling app to unlock wallet"
                     )
-                    success = cast(AppWithWalletOps, self.app).unlock_wallet(password, self)
+                    success = cast(AppWithWalletOps, self.app).unlock_wallet(
+                        password, self
+                    )
                     logger.info(
                         f"[PasswordScreen.on_button_pressed] app.unlock_wallet() returned: {success}"
                     )
@@ -1421,3 +1430,311 @@ class TransactionResultScreen(BaseModalScreen):
             self.notify("Transaction hash copied to clipboard!", severity="information")
         elif event.button.id == "close-button":
             self.app.pop_screen()
+
+
+class AccountManagerScreen(BaseModalScreen):
+    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "select", "Select")]
+
+    def __init__(self, accounts, current_index):
+        super().__init__()
+        self.accounts = accounts
+        self.current_index = current_index
+        self._account_keys = []
+
+    def compose(self) -> ComposeResult:
+        yield Label("👤 Account Manager")
+        yield DataTable(id="accounts-table")
+        yield Horizontal(
+            Button("🔄 Switch", id="switch-button", variant="primary"),
+            Button("➕ Add New", id="add-button"),
+            Button("✏️ Edit", id="edit-button"),
+            Button("🗑️ Delete", id="delete-button"),
+            Button("❌ Close", id="close-button"),
+        )
+
+    def on_mount(self) -> None:
+        table = cast(DataTable, self.query_one("#accounts-table"))
+        table.add_column("Label", key="label")
+        table.add_column("Address", key="address")
+        table.add_column("Address Book", key="address_book")
+        table.add_column("Active", key="active")
+        self._account_keys = list(range(len(self.accounts)))
+        for idx, acc in enumerate(self.accounts):
+            active = "✓" if idx == self.current_index else ""
+            book_type = "Shared" if acc.address_book_shared else "Private"
+            table.add_row(acc.label, acc.address, book_type, active, key=str(idx))
+        table.cursor_row = self.current_index
+
+    def _get_selected_index(self) -> int | None:
+        table = cast(DataTable, self.query_one("#accounts-table"))
+        cursor_row = table.cursor_row
+        if cursor_row is not None and 0 <= cursor_row < len(self.accounts):
+            return cursor_row
+        return None
+
+    def on_data_table_row_selected(self, event):
+        self._switch_to_selected()
+
+    def action_select(self) -> None:
+        self._switch_to_selected()
+
+    def _switch_to_selected(self):
+        idx = self._get_selected_index()
+        if idx is not None:
+            self.post_message(self.AccountSelected(index=idx))
+            self.app.pop_screen()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        idx = self._get_selected_index()
+        if event.button.id == "switch-button":
+            if idx is not None:
+                self.post_message(self.AccountSelected(index=idx))
+                self.app.pop_screen()
+        elif event.button.id == "add-button":
+            self.post_message(self.AddAccountRequested())
+        elif event.button.id == "edit-button":
+            if idx is not None:
+                acc = self.accounts[idx]
+                self.post_message(
+                    self.EditAccountRequested(
+                        index=idx,
+                        label=acc.label,
+                        address_book_shared=acc.address_book_shared,
+                    )
+                )
+        elif event.button.id == "delete-button":
+            if idx is not None:
+                self.post_message(self.DeleteAccountRequested(index=idx))
+        elif event.button.id == "close-button":
+            self.app.pop_screen()
+
+    class AccountSelected(Message):
+        def __init__(self, index: int):
+            super().__init__()
+            self.index = index
+
+    class AddAccountRequested(Message):
+        pass
+
+    class EditAccountRequested(Message):
+        def __init__(self, index: int, label: str, address_book_shared: bool):
+            super().__init__()
+            self.index = index
+            self.label = label
+            self.address_book_shared = address_book_shared
+
+    class DeleteAccountRequested(Message):
+        def __init__(self, index: int):
+            super().__init__()
+            self.index = index
+
+
+class AddAccountScreen(BaseModalScreen):
+    def compose(self) -> ComposeResult:
+        yield Label("➕ Add New Account")
+        yield Label("Account Label:")
+        yield Input(placeholder="e.g., Savings Account", id="label-input")
+        yield Label("Address Book:")
+        yield Horizontal(
+            Button("Shared (Recommended)", id="shared-button", variant="primary"),
+            Button("Private", id="private-button"),
+            id="address-book-buttons",
+        )
+        yield Label(id="address-book-hint")
+        yield Horizontal(
+            Button("✨ Create New", id="create-button"),
+            Button("🔑 Import Private Key", id="import-button"),
+        )
+        yield Horizontal(
+            Button("❌ Cancel", id="cancel-button"),
+        )
+
+    def on_mount(self) -> None:
+        self._address_book_shared = True
+        self._update_address_book_hint()
+
+    def _update_address_book_hint(self):
+        hint = cast(Label, self.query_one("#address-book-hint"))
+        if self._address_book_shared:
+            hint.update("Using shared address book across all accounts")
+        else:
+            hint.update("This account will have its own private address book")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "shared-button":
+            self._address_book_shared = True
+            self._update_address_book_hint()
+        elif event.button.id == "private-button":
+            self._address_book_shared = False
+            self._update_address_book_hint()
+        elif event.button.id == "create-button":
+            label_input = cast(Input, self.query_one("#label-input"))
+            label = label_input.value.strip()
+            self.post_message(
+                self.CreateAccountRequested(
+                    label=label, address_book_shared=self._address_book_shared
+                )
+            )
+            self.app.pop_screen()
+        elif event.button.id == "import-button":
+            label_input = cast(Input, self.query_one("#label-input"))
+            label = label_input.value.strip()
+            self.post_message(
+                self.ImportAccountRequested(
+                    label=label, address_book_shared=self._address_book_shared
+                )
+            )
+            self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class CreateAccountRequested(Message):
+        def __init__(self, label: str, address_book_shared: bool):
+            super().__init__()
+            self.label = label
+            self.address_book_shared = address_book_shared
+
+    class ImportAccountRequested(Message):
+        def __init__(self, label: str, address_book_shared: bool):
+            super().__init__()
+            self.label = label
+            self.address_book_shared = address_book_shared
+
+
+class ImportAccountKeyScreen(BaseModalScreen):
+    def __init__(self, label: str, address_book_shared: bool):
+        super().__init__()
+        self.label = label
+        self.address_book_shared = address_book_shared
+
+    def compose(self) -> ComposeResult:
+        yield Label("🔑 Import Account")
+        yield Label(f"Label: {self.label or '(default)'}")
+        yield Label("Private Key (hex):")
+        yield Input(
+            placeholder="64-character hex private key",
+            id="private-key-input",
+            password=True,
+        )
+        yield Label("⚠️ Never share your private key!")
+        yield Horizontal(
+            Button("✓ Import", id="import-button", variant="primary"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "import-button":
+            key_input = cast(Input, self.query_one("#private-key-input"))
+            private_key = key_input.value.strip()
+            if private_key:
+                self.post_message(
+                    self.ImportKeySubmitted(
+                        private_key=private_key,
+                        label=self.label,
+                        address_book_shared=self.address_book_shared,
+                    )
+                )
+                self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class ImportKeySubmitted(Message):
+        def __init__(self, private_key: str, label: str, address_book_shared: bool):
+            super().__init__()
+            self.private_key = private_key
+            self.label = label
+            self.address_book_shared = address_book_shared
+
+
+class EditAccountScreen(BaseModalScreen):
+    def __init__(self, index: int, label: str, address_book_shared: bool):
+        super().__init__()
+        self.index = index
+        self.label_value = label
+        self.address_book_shared_value = address_book_shared
+
+    def compose(self) -> ComposeResult:
+        yield Label("✏️ Edit Account")
+        yield Label("Account Label:")
+        yield Input(
+            placeholder="Account label", id="label-input", value=self.label_value
+        )
+        yield Label("Address Book:")
+        yield Horizontal(
+            Button("Shared", id="shared-button"),
+            Button("Private", id="private-button"),
+        )
+        yield Label(id="address-book-status")
+        yield Horizontal(
+            Button("✓ Save", id="save-button", variant="primary"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_mount(self) -> None:
+        self._update_address_book_status()
+
+    def _update_address_book_status(self):
+        status = cast(Label, self.query_one("#address-book-status"))
+        if self.address_book_shared_value:
+            status.update("Current: Shared address book")
+        else:
+            status.update("Current: Private address book")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "shared-button":
+            self.address_book_shared_value = True
+            self._update_address_book_status()
+        elif event.button.id == "private-button":
+            self.address_book_shared_value = False
+            self._update_address_book_status()
+        elif event.button.id == "save-button":
+            label_input = cast(Input, self.query_one("#label-input"))
+            label = label_input.value.strip()
+            self.post_message(
+                self.EditAccountSubmitted(
+                    index=self.index,
+                    label=label,
+                    address_book_shared=self.address_book_shared_value,
+                )
+            )
+            self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class EditAccountSubmitted(Message):
+        def __init__(self, index: int, label: str, address_book_shared: bool):
+            super().__init__()
+            self.index = index
+            self.label = label
+            self.address_book_shared = address_book_shared
+
+
+class DeleteAccountConfirmScreen(BaseModalScreen):
+    def __init__(self, index: int, label: str, address: str):
+        super().__init__()
+        self.index = index
+        self.label = label
+        self.address = address
+
+    def compose(self) -> ComposeResult:
+        yield Label("🗑️ Delete Account")
+        yield Label(f"Account: {self.label}")
+        yield Label(f"Address: {self.address}")
+        yield Label("⚠️ This action cannot be undone!")
+        yield Label("The account will be removed from this wallet.")
+        yield Horizontal(
+            Button("🗑️ Delete", id="delete-button", variant="error"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "delete-button":
+            self.post_message(self.DeleteConfirmed(index=self.index))
+            self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class DeleteConfirmed(Message):
+        def __init__(self, index: int):
+            super().__init__()
+            self.index = index

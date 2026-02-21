@@ -10,6 +10,7 @@ from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.network import NetworkClient, NetworkError
+from src.validation import AmountValidator, MosaicIdValidator
 
 logger = logging.getLogger(__name__)
 
@@ -43,31 +44,31 @@ class TransactionManager:
 
     @staticmethod
     def _normalize_mosaic_id(value: Any) -> int:
-        if isinstance(value, int):
-            return value
-
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized.startswith("0x"):
-                return int(normalized, 16)
-            try:
-                return int(normalized, 16)
-            except ValueError:
-                return int(normalized)
-
-        raise ValueError(f"Unsupported mosaic ID type: {type(value).__name__}")
+        result = MosaicIdValidator.validate(value)
+        if not result.is_valid:
+            raise ValueError(result.error_message or "Invalid mosaic ID")
+        if result.normalized_value is None:
+            raise ValueError("Invalid mosaic ID")
+        return result.normalized_value
 
     @staticmethod
     def _normalize_amount(value: Any) -> int:
-        try:
-            amount = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Invalid amount: {value}") from exc
+        if isinstance(value, int):
+            if value <= 0:
+                raise ValueError("Mosaic amount must be a positive integer")
+            return value
 
-        if amount <= 0:
-            raise ValueError("Mosaic amount must be positive")
+        if isinstance(value, str):
+            value = value.strip()
 
-        return amount
+        result = AmountValidator.parse_human_amount(str(value))
+        if not result.is_valid:
+            raise ValueError(result.error_message or "Invalid amount")
+
+        if result.normalized_value is None:
+            raise ValueError("Invalid amount")
+
+        return int(result.normalized_value)
 
     def normalize_mosaics(self, mosaics: list[dict[str, Any]]) -> list[dict[str, int]]:
         aggregated: dict[int, int] = {}

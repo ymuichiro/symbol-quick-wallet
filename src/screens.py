@@ -1,7 +1,6 @@
 """Modal screens for the Symbol Quick Wallet application."""
 
 import logging
-from decimal import Decimal, InvalidOperation
 from typing import Callable, Protocol, cast
 
 import qrcode
@@ -10,6 +9,8 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Select, Static
+
+from src.validation import AmountValidator
 
 logger = logging.getLogger(__name__)
 
@@ -1221,6 +1222,8 @@ class MosaicInputScreen(BaseModalScreen):
     def __init__(self, owned_mosaics):
         super().__init__()
         self.owned_mosaics = owned_mosaics
+        self._selected_mosaic_id: int | None = None
+        self._validation_error: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("➕ Add Mosaic to Transaction")
@@ -1241,6 +1244,8 @@ class MosaicInputScreen(BaseModalScreen):
             type="text",
         )
 
+        yield Label("", id="validation-error-label")
+
         yield Label("💡 Your owned mosaics:")
         for mosaic in self.owned_mosaics:
             divisibility = int(mosaic.get("divisibility", 0))
@@ -1260,6 +1265,63 @@ class MosaicInputScreen(BaseModalScreen):
     def action_confirm(self) -> None:
         self._submit_selected_mosaic()
 
+    def on_mount(self) -> None:
+        self._clear_validation_error()
+
+    def _clear_validation_error(self) -> None:
+        try:
+            error_label = cast(Label, self.query_one("#validation-error-label"))
+            error_label.update("")
+        except Exception:
+            pass
+
+    def _show_validation_error(self, message: str) -> None:
+        try:
+            error_label = cast(Label, self.query_one("#validation-error-label"))
+            error_label.update(f"⚠️ {message}")
+            self._validation_error = message
+        except Exception:
+            self.notify(message, severity="error")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "amount-input":
+            self._validate_amount_input(event.value)
+
+    def _validate_amount_input(self, value: str) -> bool:
+        if not value or not value.strip():
+            self._clear_validation_error()
+            return False
+
+        mosaic_select = cast(Select, self.query_one("#mosaic-select"))
+        if not mosaic_select.value or not isinstance(mosaic_select.value, str):
+            return False
+
+        try:
+            mosaic_id = int(mosaic_select.value, 16)
+        except (TypeError, ValueError):
+            return False
+
+        selected_mosaic = None
+        for mosaic in self.owned_mosaics:
+            if mosaic["id"] == mosaic_id:
+                selected_mosaic = mosaic
+                break
+
+        if not selected_mosaic:
+            return False
+
+        divisibility = int(selected_mosaic.get("divisibility", 0))
+        owned_amount = selected_mosaic.get("amount", 0)
+
+        result = AmountValidator.validate_full(value, divisibility, owned_amount)
+
+        if not result.is_valid:
+            self._show_validation_error(result.error_message or "Invalid amount")
+            return False
+
+        self._clear_validation_error()
+        return True
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "amount-input":
             self._submit_selected_mosaic()
@@ -1268,18 +1330,22 @@ class MosaicInputScreen(BaseModalScreen):
         mosaic_select = cast(Select, self.query_one("#mosaic-select"))
         amount_input = cast(Input, self.query_one("#amount-input"))
 
-        if not (mosaic_select.value and amount_input.value):
-            self.notify("Please fill all fields", severity="error")
+        if not mosaic_select.value:
+            self._show_validation_error("Please select a mosaic")
+            return
+
+        if not amount_input.value:
+            self._show_validation_error("Please enter an amount")
             return
 
         if not isinstance(mosaic_select.value, str):
-            self.notify("Please select a mosaic", severity="error")
+            self._show_validation_error("Please select a valid mosaic")
             return
 
         try:
             mosaic_id = int(mosaic_select.value, 16)
         except (TypeError, ValueError):
-            self.notify("Please select a valid mosaic", severity="error")
+            self._show_validation_error("Please select a valid mosaic")
             return
 
         selected_mosaic = None
@@ -1289,46 +1355,25 @@ class MosaicInputScreen(BaseModalScreen):
                 break
 
         if not selected_mosaic:
-            self.notify("Selected mosaic was not found", severity="error")
+            self._show_validation_error("Selected mosaic was not found")
             return
 
         divisibility = int(selected_mosaic.get("divisibility", 0))
-        raw_amount = amount_input.value.strip().replace(",", "")
+        owned_amount = selected_mosaic.get("amount", 0)
 
-        try:
-            amount_human = Decimal(raw_amount)
-        except (InvalidOperation, ValueError):
-            self.notify("Amount must be a valid number", severity="error")
-            return
+        validation_result = AmountValidator.validate_full(
+            amount_input.value, divisibility, owned_amount
+        )
 
-        if amount_human <= 0:
-            self.notify("Amount must be greater than zero", severity="error")
-            return
-
-        exponent = amount_human.as_tuple().exponent
-        if not isinstance(exponent, int):
-            self.notify("Unsupported numeric format", severity="error")
-            return
-        decimal_places = max(0, -exponent)
-        if decimal_places > divisibility:
-            self.notify(
-                f"Too many decimals. Max {divisibility} decimal places allowed.",
-                severity="error",
+        if not validation_result.is_valid:
+            self._show_validation_error(
+                validation_result.error_message or "Invalid amount"
             )
             return
 
-        try:
-            scale = Decimal(10) ** divisibility
-            amount = int(amount_human * scale)
-        except (TypeError, ValueError):
-            self.notify("Failed to convert amount", severity="error")
-            return
-
-        if not selected_mosaic or amount <= 0 or amount > selected_mosaic["amount"]:
-            self.notify("Invalid amount or insufficient balance", severity="error")
-            return
-
-        self.dismiss({"mosaic_id": mosaic_id, "amount": amount})
+        self.dismiss(
+            {"mosaic_id": mosaic_id, "amount": validation_result.normalized_value}
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "add-button":

@@ -213,6 +213,42 @@ Vertical, Horizontal {
     min-width: 20;
 }
 
+#queue-actions-row {
+    height: 3;
+    margin-top: 0;
+    margin-bottom: 1;
+}
+
+#queue-actions-row > Button {
+    width: 20;
+    min-width: 20;
+}
+
+#queue-title, #batch-result-title {
+    text-style: bold;
+    color: #67e8f9;
+    margin-bottom: 1;
+    border-bottom: solid #22d3ee;
+    padding-bottom: 0;
+}
+
+#queue-count {
+    color: #a6adc8;
+    margin-bottom: 1;
+}
+
+#total-fee {
+    color: #fbbf24;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
+#batch-summary {
+    color: #a6adc8;
+    margin-top: 1;
+    margin-bottom: 1;
+}
+
 #transfer-title, #dashboard-title, #address-book-title, #history-title, #confirm-title, #qr-address {
     text-style: bold;
     color: #67e8f9;

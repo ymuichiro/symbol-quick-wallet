@@ -49,6 +49,7 @@ from src.screens import (
     AddAddressScreen,
     AddressBookScreen,
     AddressBookSelectorScreen,
+    BatchTransactionResultScreen,
     CommandSelectorScreen,
     CreateMosaicScreen,
     DeleteAccountConfirmScreen,
@@ -70,8 +71,10 @@ from src.screens import (
     QRScannerScreen,
     SetupPasswordScreen,
     TransactionConfirmScreen,
+    TransactionQueueScreen,
     TransactionResultScreen,
 )
+from src.transaction_queue import QueuedTransaction, TransactionQueue
 from src.connection_state import (
     ConnectionMonitor,
     ConnectionMonitorConfig,
@@ -108,6 +111,7 @@ class WalletApp(App):
     _loading_screen: LoadingScreen | None = None
     _connection_monitor: ConnectionMonitor | None = None
     _previous_connection_state: ConnectionState = ConnectionState.UNKNOWN
+    _tx_queue: TransactionQueue | None = None
 
     def _format_network_error(self, error: Exception) -> str:
         """Format a network error with meaningful user-friendly message."""
@@ -192,6 +196,11 @@ class WalletApp(App):
 
         self.mosaics = []
         logger.info(f"[on_mount] Initialized mosaics list: {len(self.mosaics)} items")
+
+        self._tx_queue = TransactionQueue(self.wallet.wallet_dir)
+        logger.info(
+            f"[on_mount] Transaction queue initialized with {self._tx_queue.count()} items"
+        )
 
         logger.info("[on_mount] Checking if first run")
         is_first_run = self.wallet.is_first_run()
@@ -745,8 +754,13 @@ class WalletApp(App):
             yield Horizontal(
                 Button("📒 Select Address", id="select-address-button"),
                 Button("📷 Scan QR", id="scan-qr-button"),
-                Button("📤 Send", id="send-button", variant="primary"),
+                Button("📤 Send Now", id="send-button", variant="primary"),
                 id="transfer-actions-row",
+            )
+            yield Horizontal(
+                Button("➕ Add to Queue", id="add-to-queue-button"),
+                Button("📋 View Queue", id="view-queue-button"),
+                id="queue-actions-row",
             )
             yield Static(id="transfer-result")
 
@@ -1495,6 +1509,15 @@ class WalletApp(App):
         elif button_id == "wallet-info-button":
             logger.info("[on_button_pressed] Action: copy_address")
             self.copy_address()
+        elif button_id == "add-to-queue-button":
+            logger.info("[on_button_pressed] Action: add_to_queue")
+            self.add_to_queue()
+        elif button_id == "view-queue-button":
+            logger.info("[on_button_pressed] Action: view_queue")
+            self.view_queue()
+        elif button_id == "scan-qr-button":
+            logger.info("[on_button_pressed] Action: scan_qr_for_address")
+            self.scan_qr_for_address()
         else:
             logger.warning(f"[on_button_pressed] Unknown button ID: {button_id}")
         logger.info(
@@ -1763,6 +1786,166 @@ class WalletApp(App):
             )
         else:
             self.notify("Invalid selected row", severity="warning")
+
+    def add_to_queue(self):
+        recipient = cast(Input, self.query_one("#recipient-input")).value
+        message = cast(Input, self.query_one("#message-input")).value
+        result = cast(Static, self.query_one("#transfer-result"))
+
+        if not recipient:
+            result.update("[red]Error: Please fill recipient address[/red]")
+            return
+
+        if not self.mosaics:
+            result.update(
+                "[red]Error: Please add at least one mosaic using the + button[/red]"
+            )
+            return
+
+        try:
+            tm = TransactionManager(self.wallet, self.wallet.node_url)
+            fee = tm.estimate_fee(recipient, self.mosaics, message)
+
+            queued_tx = QueuedTransaction(
+                recipient=recipient,
+                mosaics=self.mosaics.copy(),
+                message=message,
+                estimated_fee=fee,
+            )
+
+            if self._tx_queue is None:
+                self._tx_queue = TransactionQueue(self.wallet.wallet_dir)
+
+            self._tx_queue.add(queued_tx)
+
+            self.mosaics = []
+            cast(Input, self.query_one("#recipient-input")).value = ""
+            cast(Input, self.query_one("#message-input")).value = ""
+            self.update_mosaics_table()
+
+            result.update(
+                f"[green]Transaction added to queue ({self._tx_queue.count()} pending)[/green]"
+            )
+            self.notify(
+                f"Added to queue ({self._tx_queue.count()} transactions pending)",
+                severity="information",
+            )
+        except ValueError as e:
+            result.update(f"[red]Error: {str(e)}[/red]")
+        except Exception as e:
+            result.update(f"[red]Error: {str(e)}[/red]")
+
+    def view_queue(self):
+        if self._tx_queue is None:
+            self._tx_queue = TransactionQueue(self.wallet.wallet_dir)
+
+        if self._tx_queue.is_empty():
+            self.notify("Transaction queue is empty", severity="information")
+            return
+
+        transactions = self._tx_queue.get_all()
+        total_fee = self._tx_queue.get_total_estimated_fee()
+        self.push_screen(
+            TransactionQueueScreen(transactions, total_fee),
+            self._on_queue_screen_dismissed,
+        )
+
+    def _on_queue_screen_dismissed(self, result) -> None:
+        pass
+
+    def scan_qr_for_address(self):
+        self.push_screen(QRScannerScreen())
+
+    def on_transaction_queue_screen_submit_all_requested(self, event) -> None:
+        self._submit_queue_all()
+
+    def on_transaction_queue_screen_remove_requested(self, event) -> None:
+        if self._tx_queue and self._tx_queue.remove(event.transaction_id):
+            self.notify("Transaction removed from queue", severity="information")
+            self.view_queue()
+        else:
+            self.notify("Failed to remove transaction", severity="error")
+
+    def on_transaction_queue_screen_clear_requested(self, event) -> None:
+        if self._tx_queue:
+            count = self._tx_queue.clear()
+            self.notify(
+                f"Cleared {count} transactions from queue", severity="information"
+            )
+
+    def _submit_queue_all(self) -> None:
+        if self._tx_queue is None or self._tx_queue.is_empty():
+            self.notify("Queue is empty", severity="warning")
+            return
+
+        transactions = self._tx_queue.pop_all()
+        self._submit_batch_async(transactions)
+
+    def _submit_batch_async(self, transactions: list) -> None:
+        self._set_transfer_actions_enabled(False)
+        result = cast(Static, self.query_one("#transfer-result"))
+        result.update("[yellow]Submitting batch transactions...[/yellow]")
+
+        def worker() -> None:
+            results = []
+            tm = TransactionManager(self.wallet, self.wallet.node_url)
+
+            for tx in transactions:
+                try:
+                    signed = tm.create_sign_and_announce(
+                        tx.recipient, tx.mosaics, tx.message
+                    )
+                    status = tm.wait_for_transaction_status(
+                        signed["hash"],
+                        timeout_seconds=180,
+                        poll_interval_seconds=3,
+                    )
+                    status_group = (status or {}).get("group", "")
+                    status_code = (status or {}).get("code", "")
+                    success = status_group == "confirmed" or (
+                        status_group != "failed" and status_code == "Success"
+                    )
+                    results.append(
+                        {
+                            "recipient": tx.recipient,
+                            "success": success,
+                            "hash": signed["hash"] if success else "N/A",
+                            "error": None,
+                        }
+                    )
+                except Exception as e:
+                    results.append(
+                        {
+                            "recipient": tx.recipient,
+                            "success": False,
+                            "hash": "N/A",
+                            "error": str(e),
+                        }
+                    )
+
+            self.call_from_thread(self._on_batch_finished, results)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_batch_finished(self, results: list[dict]) -> None:
+        self._set_transfer_actions_enabled(True)
+        result = cast(Static, self.query_one("#transfer-result"))
+
+        success_count = sum(1 for r in results if r.get("success"))
+        total_count = len(results)
+
+        if success_count == total_count:
+            result.update(
+                f"[green]All {total_count} transactions completed successfully![/green]"
+            )
+        else:
+            result.update(
+                f"[yellow]Batch completed: {success_count}/{total_count} successful[/yellow]"
+            )
+
+        self.push_screen(
+            BatchTransactionResultScreen(results, self.wallet.network_name)
+        )
 
     def show_address_book_selector(self):
         addresses = self.wallet.get_addresses()
@@ -2477,6 +2660,15 @@ class WalletApp(App):
         )
         logger.info("=" * 80)
         logger.info("")
+
+    def on_qr_scanner_screen_qr_code_scanned(self, event) -> None:
+        if event.data:
+            address = event.data.get("address", "")
+            if address:
+                cast(Input, self.query_one("#recipient-input")).value = address
+                self.notify("Address scanned from QR code", severity="information")
+            else:
+                self.notify("No address found in QR code", severity="warning")
 
 
 def main():

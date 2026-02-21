@@ -1893,3 +1893,223 @@ class QRScannerScreen(BaseModalScreen):
         def __init__(self, data):
             super().__init__()
             self.data = data
+
+
+class TransactionQueueScreen(BaseModalScreen):
+    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "submit_all", "Submit All")]
+
+    def __init__(self, transactions, total_fee: float):
+        super().__init__()
+        self.transactions = transactions
+        self.total_fee = total_fee
+        self._transaction_ids = [tx.id for tx in transactions]
+
+    def compose(self) -> ComposeResult:
+        yield Label("📋 Transaction Queue", id="queue-title")
+        yield Label(
+            f"{len(self.transactions)} transaction(s) pending", id="queue-count"
+        )
+        yield DataTable(id="queue-table")
+        yield Static(
+            f"💰 Total Estimated Fee: {self.total_fee:,.6f} XYM", id="total-fee"
+        )
+        yield Horizontal(
+            Button("📤 Submit All", id="submit-all-button", variant="primary"),
+            Button("🗑️ Remove Selected", id="remove-button"),
+            Button("🗑️ Clear All", id="clear-button"),
+            Button("❌ Close", id="close-button"),
+        )
+
+    def on_mount(self) -> None:
+        table = cast(DataTable, self.query_one("#queue-table"))
+        table.add_column("#", key="index")
+        table.add_column("Recipient", key="recipient")
+        table.add_column("Mosaics", key="mosaics")
+        table.add_column("Message", key="message")
+        table.add_column("Fee", key="fee")
+
+        for idx, tx in enumerate(self.transactions):
+            recipient = (
+                tx.recipient[:20] + "..." if len(tx.recipient) > 20 else tx.recipient
+            )
+            mosaics_str = self._format_mosaics(tx.mosaics)
+            message_preview = (
+                (tx.message[:15] + "...") if len(tx.message) > 15 else tx.message
+            )
+            fee_str = f"{tx.estimated_fee:,.6f}"
+            table.add_row(
+                str(idx + 1),
+                recipient,
+                mosaics_str,
+                message_preview,
+                fee_str,
+                key=tx.id,
+            )
+
+    def _format_mosaics(self, mosaics: list[dict]) -> str:
+        if not mosaics:
+            return "(none)"
+        if len(mosaics) == 1:
+            amount = mosaics[0].get("amount", 0) / 1_000_000
+            return f"{amount:,.2f}"
+        return f"{len(mosaics)} mosaics"
+
+    def _get_selected_id(self) -> str | None:
+        table = cast(DataTable, self.query_one("#queue-table"))
+        cursor_row = table.cursor_row
+        if cursor_row is not None and 0 <= cursor_row < len(self._transaction_ids):
+            return self._transaction_ids[cursor_row]
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "submit-all-button":
+            self.post_message(self.SubmitAllRequested())
+            self.app.pop_screen()
+        elif event.button.id == "remove-button":
+            tx_id = self._get_selected_id()
+            if tx_id:
+                self.post_message(self.RemoveRequested(transaction_id=tx_id))
+        elif event.button.id == "clear-button":
+            self.post_message(self.ClearRequested())
+            self.app.pop_screen()
+        elif event.button.id == "close-button":
+            self.app.pop_screen()
+
+    class SubmitAllRequested(Message):
+        pass
+
+    class RemoveRequested(Message):
+        def __init__(self, transaction_id: str):
+            super().__init__()
+            self.transaction_id = transaction_id
+
+    class ClearRequested(Message):
+        pass
+
+
+class BatchTransactionResultScreen(BaseModalScreen):
+    BINDINGS = [("escape", "app.pop_screen", "Close")]
+
+    def __init__(self, results: list[dict], network: str = "testnet"):
+        super().__init__()
+        self.results = results
+        self.network = network
+
+    def compose(self) -> ComposeResult:
+        yield Label("📋 Batch Transaction Results", id="batch-result-title")
+        yield DataTable(id="batch-results-table")
+        yield Static("", id="batch-summary")
+        yield Button("❌ Close", id="close-button")
+
+    def on_mount(self) -> None:
+        table = cast(DataTable, self.query_one("#batch-results-table"))
+        table.add_column("#", key="index")
+        table.add_column("Recipient", key="recipient")
+        table.add_column("Status", key="status")
+        table.add_column("Hash", key="hash")
+
+        success_count = 0
+        for idx, result in enumerate(self.results):
+            recipient = result.get("recipient", "")[:20]
+            if len(result.get("recipient", "")) > 20:
+                recipient += "..."
+            status = "✅ Success" if result.get("success") else "❌ Failed"
+            hash_val = result.get("hash", "N/A")
+            if result.get("success") and hash_val != "N/A":
+                hash_val = hash_val[:16] + "..."
+            table.add_row(str(idx + 1), recipient, status, hash_val, key=str(idx))
+            if result.get("success"):
+                success_count += 1
+
+        summary = cast(Static, self.query_one("#batch-summary"))
+        summary.update(
+            f"Summary: {success_count}/{len(self.results)} transactions successful"
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close-button":
+            self.app.pop_screen()
+
+
+class LoadingScreen(BaseModalScreen):
+    BINDINGS = []
+
+    def __init__(self, message: str = "Loading...", show_progress: bool = False):
+        super().__init__()
+        self._message = message
+        self._show_progress = show_progress
+        self._progress_text = ""
+        self._retry_count = 0
+        self._max_retries = 0
+        self._loading_step = 0
+        self._loading_timer = None
+        self._loading_active = False
+
+    def compose(self) -> ComposeResult:
+        yield Label(self._message, id="loading-message")
+        yield Static("", id="loading-progress")
+        yield Static("", id="loading-spinner")
+
+    def on_mount(self) -> None:
+        self._start_loading_animation()
+
+    def on_unmount(self) -> None:
+        self._stop_loading_animation()
+
+    def _start_loading_animation(self) -> None:
+        self._loading_active = True
+        self._loading_step = 0
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+        def tick() -> None:
+            if not self._loading_active:
+                return
+            self._loading_step = (self._loading_step + 1) % len(frames)
+            spinner = frames[self._loading_step]
+            try:
+                spinner_widget = cast(Static, self.query_one("#loading-spinner"))
+                spinner_widget.update(f"[cyan]{spinner}[/cyan]")
+            except Exception:
+                pass
+
+        self._loading_timer = self.set_interval(0.08, tick)
+
+    def _stop_loading_animation(self) -> None:
+        self._loading_active = False
+        if self._loading_timer:
+            try:
+                self._loading_timer.stop()
+            except Exception:
+                pass
+            self._loading_timer = None
+
+    def update_message(self, message: str) -> None:
+        self._message = message
+        try:
+            label = cast(Label, self.query_one("#loading-message"))
+            label.update(message)
+        except Exception:
+            pass
+
+    def update_progress(self, text: str) -> None:
+        self._progress_text = text
+        try:
+            progress = cast(Static, self.query_one("#loading-progress"))
+            progress.update(f"[dim]{text}[/dim]")
+        except Exception:
+            pass
+
+    def set_retry_status(self, attempt: int, max_retries: int, delay: float) -> None:
+        self._retry_count = attempt
+        self._max_retries = max_retries
+        self.update_progress(f"Retry {attempt}/{max_retries} in {delay:.1f}s...")
+
+    def show_error(self, error_message: str) -> None:
+        self._stop_loading_animation()
+        try:
+            spinner = cast(Static, self.query_one("#loading-spinner"))
+            spinner.update("[red]✗[/red]")
+            label = cast(Label, self.query_one("#loading-message"))
+            label.update(f"[red]{error_message}[/red]")
+        except Exception:
+            pass

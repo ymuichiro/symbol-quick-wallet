@@ -21,7 +21,7 @@ Allow users to manage multiple accounts/wallets within the same application.
 
 ## Implement transaction queue
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: medium
 
 Allow users to prepare multiple transactions and batch submit them.

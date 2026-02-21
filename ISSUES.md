@@ -11,6 +11,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 - Implement retry logic with exponential backoff
 ---
 ---
+---
 
 ---
 
@@ -27,12 +28,13 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - Prevent submission of invalid data
 ---
 ---
+---
 
 ---
 
 ## Improve test coverage
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: medium
 
 Current test coverage is minimal. Need comprehensive tests for:
@@ -41,6 +43,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 - Address validation
 - Mosaic amount conversion
 - Error scenarios
+---
 ---
 ---
 
@@ -55,6 +58,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 - Network is unavailable
 - Node connection is lost
 - Connection is restored
+---
 ---
 ---
 

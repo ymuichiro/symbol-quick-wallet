@@ -1,21 +1,16 @@
-# Issues / Problems
-
-This file tracks bugs, problems, and improvements needed in the codebase.
-
----
-
 ## Fix error handling for network timeouts
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: high
 
 The wallet currently doesn't handle network timeouts gracefully. When a node is slow or unresponsive, the UI freezes without clear feedback to the user.
-
 **Improvements needed:**
 - Add timeout configuration
 - Show loading indicators during network operations
 - Display meaningful error messages
 - Implement retry logic with exponential backoff
+---
+---
 
 ---
 
@@ -25,12 +20,13 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 - **Priority**: high
 
 Users can input invalid amounts (negative, too many decimals, etc.) which may cause confusing errors.
-
 **Required:**
 - Validate amount format before submission
 - Check against mosaic divisibility
 - Show inline validation errors
 - Prevent submission of invalid data
+---
+---
 
 ---
 
@@ -45,18 +41,22 @@ Current test coverage is minimal. Need comprehensive tests for:
 - Address validation
 - Mosaic amount conversion
 - Error scenarios
+---
+---
 
 ---
 
 ## Handle offline/online state gracefully
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: medium
 
 The app doesn't detect or handle network state changes. Users should be notified when:
 - Network is unavailable
 - Node connection is lost
 - Connection is restored
+---
+---
 
 ---
 

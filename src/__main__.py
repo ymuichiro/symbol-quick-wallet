@@ -69,11 +69,16 @@ from src.screens import (
     PasswordScreen,
     QRCodeScreen,
     QRScannerScreen,
+    SaveTemplateScreen,
     SetupPasswordScreen,
+    TemplateListScreen,
+    TemplateSelectorScreen,
     TransactionConfirmScreen,
     TransactionQueueScreen,
     TransactionResultScreen,
+    TransactionStatusScreen,
 )
+from src.transaction_template import TemplateStorage, TransactionTemplate
 from src.transaction_queue import QueuedTransaction, TransactionQueue
 from src.connection_state import (
     ConnectionMonitor,
@@ -112,6 +117,8 @@ class WalletApp(App):
     _connection_monitor: ConnectionMonitor | None = None
     _previous_connection_state: ConnectionState = ConnectionState.UNKNOWN
     _tx_queue: TransactionQueue | None = None
+    _template_storage: TemplateStorage | None = None
+    _status_screen: TransactionStatusScreen | None = None
 
     def _format_network_error(self, error: Exception) -> str:
         """Format a network error with meaningful user-friendly message."""
@@ -200,6 +207,11 @@ class WalletApp(App):
         self._tx_queue = TransactionQueue(self.wallet.wallet_dir)
         logger.info(
             f"[on_mount] Transaction queue initialized with {self._tx_queue.count()} items"
+        )
+
+        self._template_storage = TemplateStorage(self.wallet.wallet_dir)
+        logger.info(
+            f"[on_mount] Template storage initialized with {self._template_storage.count()} templates"
         )
 
         logger.info("[on_mount] Checking if first run")
@@ -762,6 +774,11 @@ class WalletApp(App):
                 Button("📋 View Queue", id="view-queue-button"),
                 id="queue-actions-row",
             )
+            yield Horizontal(
+                Button("💾 Save Template", id="save-template-button"),
+                Button("📋 Templates", id="view-templates-button"),
+                id="template-actions-row",
+            )
             yield Static(id="transfer-result")
 
         with Container(id="address-book-tab"):
@@ -807,6 +824,7 @@ class WalletApp(App):
                     "  /address_book - 📒 Address Book",
                     "  /history - 📜 History",
                     "  /accounts - 👤 Account Manager",
+                    "  /templates - 📋 Transaction Templates",
                     "  /show_config - ⚙️ Show Config",
                     "  /network_testnet - 🌐 Network Testnet",
                     "  /network_mainnet - 🌐 Network Mainnet",
@@ -822,6 +840,7 @@ class WalletApp(App):
                 ("📒 Address Book", "address_book"),
                 ("📜 History", "history"),
                 ("👤 Account Manager", "accounts"),
+                ("📋 Transaction Templates", "templates"),
                 ("⚙️ Show Config", "show_config"),
                 ("🌐 Network Testnet", "network_testnet"),
                 ("🌐 Network Mainnet", "network_mainnet"),
@@ -936,6 +955,8 @@ class WalletApp(App):
             self.show_unlink_harvesting_dialog()
         elif normalized == "accounts":
             self.show_account_manager()
+        elif normalized == "templates":
+            self.view_templates()
         else:
             self.notify(f"Unknown command: /{normalized}", severity="warning")
 
@@ -1518,6 +1539,12 @@ class WalletApp(App):
         elif button_id == "scan-qr-button":
             logger.info("[on_button_pressed] Action: scan_qr_for_address")
             self.scan_qr_for_address()
+        elif button_id == "save-template-button":
+            logger.info("[on_button_pressed] Action: save_template")
+            self.save_template()
+        elif button_id == "view-templates-button":
+            logger.info("[on_button_pressed] Action: view_templates")
+            self.view_templates()
         else:
             logger.warning(f"[on_button_pressed] Unknown button ID: {button_id}")
         logger.info(
@@ -1724,14 +1751,32 @@ class WalletApp(App):
 
     def _submit_transaction_async(self, recipient: str, mosaics, message: str) -> None:
         self._set_transfer_actions_enabled(False)
-        self._start_transfer_loading("Announcing and waiting for confirmation")
+
+        status_screen = TransactionStatusScreen("", self.wallet.network_name)
+        self._status_screen = status_screen
+        self.push_screen(status_screen)
+
+        def on_status_update(status: str, detail: str) -> None:
+            try:
+                self.call_from_thread(status_screen.update_status, status, detail)
+            except Exception:
+                pass
 
         def worker() -> None:
             try:
                 tm = TransactionManager(self.wallet, self.wallet.node_url)
                 signed = tm.create_sign_and_announce(recipient, mosaics, message)
-                status = tm.wait_for_transaction_status(
-                    signed["hash"],
+                tx_hash = signed["hash"]
+
+                self.call_from_thread(
+                    status_screen.update_status,
+                    "announced",
+                    f"Transaction announced, hash: {tx_hash[:16]}...",
+                )
+
+                status = tm.poll_for_transaction_status(
+                    tx_hash,
+                    on_status_update=on_status_update,
                     timeout_seconds=180,
                     poll_interval_seconds=3,
                 )
@@ -1746,9 +1791,15 @@ class WalletApp(App):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_transaction_send_finished(self, signed, status, error: str | None) -> None:
-        self._stop_transfer_loading()
         self._set_transfer_actions_enabled(True)
         result = cast(Static, self.query_one("#transfer-result"))
+
+        if hasattr(self, "_status_screen") and self._status_screen:
+            try:
+                self.pop_screen()
+            except Exception:
+                pass
+            self._status_screen = None
 
         if error:
             result.update(f"[red]Error: {error}[/red]")
@@ -1856,6 +1907,83 @@ class WalletApp(App):
     def scan_qr_for_address(self):
         self.push_screen(QRScannerScreen())
 
+    def save_template(self):
+        recipient = cast(Input, self.query_one("#recipient-input")).value
+        message = cast(Input, self.query_one("#message-input")).value
+        result = cast(Static, self.query_one("#transfer-result"))
+
+        if not recipient:
+            result.update("[red]Error: Please fill recipient address first[/red]")
+            return
+
+        if not self.mosaics:
+            result.update(
+                "[red]Error: Please add at least one mosaic to save as template[/red]"
+            )
+            return
+
+        self.push_screen(SaveTemplateScreen(recipient, self.mosaics.copy(), message))
+
+    def view_templates(self):
+        if self._template_storage is None:
+            self._template_storage = TemplateStorage(self.wallet.wallet_dir)
+
+        templates = self._template_storage.get_all()
+        if not templates:
+            self.notify("No templates saved yet", severity="information")
+            return
+
+        self.push_screen(TemplateListScreen(templates))
+
+    def on_save_template_screen_save_template_requested(self, event) -> None:
+        if self._template_storage is None:
+            self._template_storage = TemplateStorage(self.wallet.wallet_dir)
+
+        mosaics_copy = []
+        for m in event.mosaics:
+            mosaics_copy.append(
+                {
+                    "mosaic_id": m.get("mosaic_id") or m.get("id"),
+                    "amount": m.get("amount"),
+                }
+            )
+
+        template = TransactionTemplate(
+            name=event.name,
+            recipient=event.recipient,
+            mosaics=mosaics_copy,
+            message=event.message,
+        )
+        self._template_storage.add(template)
+        self.notify(f"Template '{event.name}' saved!", severity="information")
+
+    def on_template_list_screen_use_template_requested(self, event) -> None:
+        template = event.template
+        cast(Input, self.query_one("#recipient-input")).value = template.recipient
+        cast(Input, self.query_one("#message-input")).value = template.message
+
+        self.mosaics = []
+        for m in template.mosaics:
+            mosaic_id = m.get("mosaic_id") or m.get("id")
+            amount = m.get("amount", 0)
+            self.mosaics.append({"mosaic_id": mosaic_id, "amount": amount})
+
+        self.update_mosaics_table()
+        cast(Static, self.query_one("#transfer-result")).update(
+            f"[green]Template '{template.name}' loaded[/green]"
+        )
+        self.notify(f"Template '{template.name}' applied", severity="information")
+
+    def on_template_list_screen_delete_template_requested(self, event) -> None:
+        if self._template_storage is None:
+            self._template_storage = TemplateStorage(self.wallet.wallet_dir)
+
+        if self._template_storage.remove(event.template_id):
+            self.notify("Template deleted", severity="information")
+            self.view_templates()
+        else:
+            self.notify("Failed to delete template", severity="error")
+
     def on_transaction_queue_screen_submit_all_requested(self, event) -> None:
         self._submit_queue_all()
 
@@ -1895,7 +2023,7 @@ class WalletApp(App):
                     signed = tm.create_sign_and_announce(
                         tx.recipient, tx.mosaics, tx.message
                     )
-                    status = tm.wait_for_transaction_status(
+                    status = tm.poll_for_transaction_status(
                         signed["hash"],
                         timeout_seconds=180,
                         poll_interval_seconds=3,
@@ -2662,13 +2790,38 @@ class WalletApp(App):
         logger.info("")
 
     def on_qr_scanner_screen_qr_code_scanned(self, event) -> None:
-        if event.data:
-            address = event.data.get("address", "")
-            if address:
-                cast(Input, self.query_one("#recipient-input")).value = address
-                self.notify("Address scanned from QR code", severity="information")
-            else:
-                self.notify("No address found in QR code", severity="warning")
+        if not event.data:
+            self.notify("No data in QR code", severity="warning")
+            return
+
+        address = event.data.get("address", "")
+        if not address:
+            self.notify("No address found in QR code", severity="warning")
+            return
+
+        cast(Input, self.query_one("#recipient-input")).value = address
+        self.action_switch_tab("transfer")
+
+        mosaics = event.data.get("mosaics")
+        if mosaics and isinstance(mosaics, list):
+            for m in mosaics:
+                mosaic_id = m.get("mosaic_id") or m.get("id")
+                amount = m.get("amount", 0)
+                if mosaic_id is not None:
+                    self.mosaics.append(
+                        {"mosaic_id": int(mosaic_id), "amount": int(amount)}
+                    )
+            self.update_mosaics_table()
+            self.notify(
+                f"Address and {len(mosaics)} mosaic(s) scanned from QR code",
+                severity="information",
+            )
+        else:
+            self.notify("Address scanned from QR code", severity="information")
+
+        message = event.data.get("message")
+        if message:
+            cast(Input, self.query_one("#message-input")).value = message
 
 
 def main():

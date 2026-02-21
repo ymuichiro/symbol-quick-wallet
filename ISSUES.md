@@ -12,6 +12,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 ---
 ---
 ---
+---
 
 ---
 
@@ -26,6 +27,7 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - Check against mosaic divisibility
 - Show inline validation errors
 - Prevent submission of invalid data
+---
 ---
 ---
 ---
@@ -46,6 +48,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 ---
 ---
 ---
+---
 
 ---
 
@@ -61,12 +64,13 @@ The app doesn't detect or handle network state changes. Users should be notified
 ---
 ---
 ---
+---
 
 ---
 
 ## Add transaction confirmation status polling
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: medium
 
 After submitting a transaction, the app should poll for confirmation status and update the UI accordingly instead of just showing a loading indicator.

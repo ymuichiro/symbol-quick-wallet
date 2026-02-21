@@ -4,7 +4,7 @@ import logging
 import json
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
@@ -190,14 +190,16 @@ class TransactionManager:
             poll_interval_seconds=poll_interval_seconds,
         )
 
-    def wait_for_transaction_status(
+    def poll_for_transaction_status(
         self,
         tx_hash: str,
+        on_status_update: Callable[[str, str], None] | None = None,
         timeout_seconds: int = 180,
-        poll_interval_seconds: int = 5,
+        poll_interval_seconds: int = 3,
     ) -> dict[str, Any]:
         normalized_hash = tx_hash.strip().upper()
         deadline = time.time() + timeout_seconds
+        last_status = ""
 
         while time.time() < deadline:
             try:
@@ -211,10 +213,22 @@ class TransactionManager:
                 )
                 if statuses:
                     status = statuses[0]
-                    if status.get("group") in {"confirmed", "failed"}:
+                    group = status.get("group", "")
+                    code = status.get("code", "")
+
+                    if group in {"confirmed", "failed"}:
+                        if on_status_update:
+                            on_status_update(group, code or f"Transaction {group}")
                         return status
+
+                    current_status = f"{group}:{code}" if code else group
+                    if current_status != last_status:
+                        if on_status_update:
+                            on_status_update(group, code or f"Status: {group}")
+                        last_status = current_status
             except NetworkError:
                 pass
+
             time.sleep(poll_interval_seconds)
 
         raise TimeoutError(

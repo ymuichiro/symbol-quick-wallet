@@ -69,6 +69,7 @@ class CommandSelectorScreen(BaseModalScreen):
             ("/history", "📜 History"),
             ("/h", "📜 History"),
             ("/accounts", "👤 Account Manager"),
+            ("/templates", "📋 Transaction Templates"),
             ("/show_config", "⚙️ Show Config"),
             ("/network_testnet", "🌐 Network: Testnet"),
             ("/network_mainnet", "🌐 Network: Mainnet"),
@@ -2113,3 +2114,347 @@ class LoadingScreen(BaseModalScreen):
             label.update(f"[red]{error_message}[/red]")
         except Exception:
             pass
+
+
+class TransactionStatusScreen(BaseModalScreen):
+    BINDINGS = []
+
+    def __init__(self, tx_hash: str, network: str = "testnet"):
+        super().__init__()
+        self.tx_hash = tx_hash
+        self.network = network
+        self._status = "pending"
+        self._status_detail = "Waiting for status..."
+        self._elapsed_seconds = 0
+        self._loading_step = 0
+        self._loading_timer = None
+        self._loading_active = False
+        self._elapsed_timer = None
+
+    def compose(self) -> ComposeResult:
+        yield Label("⏳ Transaction Status", id="tx-status-title")
+        yield Static(self.tx_hash[:32] + "...", id="tx-status-hash")
+        yield Label("Status:", id="tx-status-label")
+        yield Static("[yellow]⏳ Pending...[/yellow]", id="tx-status-value")
+        yield Static("", id="tx-status-detail")
+        yield Static("Elapsed: 0s", id="tx-status-elapsed")
+
+    def on_mount(self) -> None:
+        self._start_loading_animation()
+        self._start_elapsed_timer()
+
+    def on_unmount(self) -> None:
+        self._stop_loading_animation()
+        self._stop_elapsed_timer()
+
+    def _start_loading_animation(self) -> None:
+        self._loading_active = True
+        self._loading_step = 0
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+        def tick() -> None:
+            if not self._loading_active:
+                return
+            self._loading_step = (self._loading_step + 1) % len(frames)
+            spinner = frames[self._loading_step]
+            try:
+                status_widget = cast(Static, self.query_one("#tx-status-value"))
+                current = status_widget.renderable or ""
+                if "[yellow]" in str(current):
+                    status_widget.update(
+                        f"[yellow]{spinner} {current.replace('[yellow]', '').replace('[/yellow]', '')}[/yellow]"
+                    )
+            except Exception:
+                pass
+
+        self._loading_timer = self.set_interval(0.08, tick)
+
+    def _stop_loading_animation(self) -> None:
+        self._loading_active = False
+        if self._loading_timer:
+            try:
+                self._loading_timer.stop()
+            except Exception:
+                pass
+            self._loading_timer = None
+
+    def _start_elapsed_timer(self) -> None:
+        def tick() -> None:
+            self._elapsed_seconds += 1
+            try:
+                elapsed_widget = cast(Static, self.query_one("#tx-status-elapsed"))
+                elapsed_widget.update(f"Elapsed: {self._elapsed_seconds}s")
+            except Exception:
+                pass
+
+        self._elapsed_timer = self.set_interval(1.0, tick)
+
+    def _stop_elapsed_timer(self) -> None:
+        if self._elapsed_timer:
+            try:
+                self._elapsed_timer.stop()
+            except Exception:
+                pass
+            self._elapsed_timer = None
+
+    def update_status(self, status: str, detail: str = "") -> None:
+        self._status = status
+        self._status_detail = detail
+        try:
+            status_widget = cast(Static, self.query_one("#tx-status-value"))
+            detail_widget = cast(Static, self.query_one("#tx-status-detail"))
+
+            if status == "confirmed":
+                self._stop_loading_animation()
+                status_widget.update("[green]✓ Confirmed[/green]")
+                detail_widget.update(
+                    f"[green]{detail or 'Transaction confirmed successfully'}[/green]"
+                )
+            elif status == "failed":
+                self._stop_loading_animation()
+                status_widget.update("[red]✗ Failed[/red]")
+                detail_widget.update(f"[red]{detail or 'Transaction failed'}[/red]")
+            elif status == "unconfirmed":
+                status_widget.update("[yellow]⏳ Unconfirmed (in mempool)[/yellow]")
+                detail_widget.update(f"[dim]{detail}[/dim]")
+            elif status == "partial":
+                status_widget.update("[cyan]⏳ Partial[/cyan]")
+                detail_widget.update(f"[dim]{detail}[/dim]")
+            else:
+                status_widget.update(f"[yellow]⏳ {status.title()}[/yellow]")
+                detail_widget.update(f"[dim]{detail}[/dim]")
+        except Exception:
+            pass
+
+    def show_success(self, tx_hash: str) -> None:
+        self._stop_loading_animation()
+        try:
+            status_widget = cast(Static, self.query_one("#tx-status-value"))
+            detail_widget = cast(Static, self.query_one("#tx-status-detail"))
+            status_widget.update("[green]✓ Confirmed[/green]")
+            if self.network == "testnet":
+                explorer_url = f"https://testnet.symbol.fyi/transactions/{tx_hash}"
+            else:
+                explorer_url = f"https://symbol.fyi/transactions/{tx_hash}"
+            detail_widget.update(
+                f"[green]Transaction confirmed![/green]\n[dim]Explorer: {explorer_url}[/dim]"
+            )
+        except Exception:
+            pass
+
+    def show_failure(self, error: str) -> None:
+        self._stop_loading_animation()
+        try:
+            status_widget = cast(Static, self.query_one("#tx-status-value"))
+            detail_widget = cast(Static, self.query_one("#tx-status-detail"))
+            status_widget.update("[red]✗ Failed[/red]")
+            detail_widget.update(f"[red]{error}[/red]")
+        except Exception:
+            pass
+
+
+class TemplateSelectorScreen(BaseModalScreen):
+    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "select", "Select")]
+
+    def __init__(self, templates):
+        super().__init__()
+        self.templates = templates
+        self._template_ids = [tpl.id for tpl in templates]
+
+    def compose(self) -> ComposeResult:
+        yield Label("📋 Select Template")
+        if not self.templates:
+            yield Label("No templates saved yet.")
+        else:
+            yield DataTable(id="template-table")
+        yield Horizontal(
+            Button("❌ Cancel", id="cancel-button"),
+        )
+
+    def on_mount(self) -> None:
+        if not self.templates:
+            return
+        table = cast(DataTable, self.query_one("#template-table"))
+        table.add_column("Name", key="name")
+        table.add_column("Recipient", key="recipient")
+        table.add_column("Message", key="message")
+        for tpl in self.templates:
+            recipient_short = (
+                tpl.recipient[:20] + "..." if len(tpl.recipient) > 20 else tpl.recipient
+            )
+            message_short = (
+                (tpl.message[:15] + "...") if len(tpl.message) > 15 else tpl.message
+            )
+            table.add_row(tpl.name, recipient_short, message_short, key=tpl.id)
+
+    def on_data_table_row_selected(self, event):
+        row = event.row_key
+        template_id = row.value if hasattr(row, "value") else str(row)
+        self._select_template(template_id)
+
+    def action_select(self) -> None:
+        table = cast(DataTable, self.query_one("#template-table"))
+        cursor_row = table.cursor_row
+        if cursor_row is not None and 0 <= cursor_row < len(self._template_ids):
+            self._select_template(self._template_ids[cursor_row])
+
+    def _select_template(self, template_id: str) -> None:
+        for tpl in self.templates:
+            if tpl.id == template_id:
+                self.post_message(self.TemplateSelected(template=tpl))
+                self.app.pop_screen()
+                return
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class TemplateSelected(Message):
+        def __init__(self, template):
+            super().__init__()
+            self.template = template
+
+
+class SaveTemplateScreen(BaseModalScreen):
+    def __init__(self, recipient: str, mosaics: list, message: str):
+        super().__init__()
+        self.recipient = recipient
+        self.mosaics = mosaics
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        yield Label("💾 Save as Template")
+        yield Label("Template Name:")
+        yield Input(placeholder="e.g., Monthly Rent Payment", id="name-input")
+        yield Label(
+            f"Recipient: {self.recipient[:30]}{'...' if len(self.recipient) > 30 else ''}"
+        )
+        yield Label(f"Mosaics: {len(self.mosaics)} item(s)")
+        yield Label(
+            f"Message: {self.message[:30] if self.message else '(none)'}{'...' if len(self.message) > 30 else ''}"
+        )
+        yield Horizontal(
+            Button("✓ Save", id="save-button", variant="primary"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save-button":
+            name_input = cast(Input, self.query_one("#name-input"))
+            name = name_input.value.strip()
+            if not name:
+                self.notify("Please enter a template name", severity="warning")
+                return
+            self.post_message(
+                self.SaveTemplateRequested(
+                    name=name,
+                    recipient=self.recipient,
+                    mosaics=self.mosaics,
+                    message=self.message,
+                )
+            )
+            self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class SaveTemplateRequested(Message):
+        def __init__(self, name: str, recipient: str, mosaics: list, message: str):
+            super().__init__()
+            self.name = name
+            self.recipient = recipient
+            self.mosaics = mosaics
+            self.message = message
+
+
+class TemplateListScreen(BaseModalScreen):
+    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "use", "Use")]
+
+    def __init__(self, templates):
+        super().__init__()
+        self.templates = templates
+        self._template_ids = [tpl.id for tpl in templates]
+
+    def compose(self) -> ComposeResult:
+        yield Label("📋 Transaction Templates", id="template-list-title")
+        if not self.templates:
+            yield Label("No templates saved yet.")
+            yield Label("Use 'Save as Template' in the Transfer tab to create one.")
+        else:
+            yield DataTable(id="templates-table")
+        yield Horizontal(
+            Button("📤 Use Selected", id="use-button", variant="primary"),
+            Button("🗑️ Delete", id="delete-button"),
+            Button("❌ Close", id="close-button"),
+        )
+
+    def on_mount(self) -> None:
+        if not self.templates:
+            return
+        table = cast(DataTable, self.query_one("#templates-table"))
+        table.add_column("Name", key="name")
+        table.add_column("Recipient", key="recipient")
+        table.add_column("Mosaics", key="mosaics")
+        table.add_column("Message", key="message")
+        for tpl in self.templates:
+            recipient_short = (
+                tpl.recipient[:20] + "..." if len(tpl.recipient) > 20 else tpl.recipient
+            )
+            mosaics_str = self._format_mosaics(tpl.mosaics)
+            message_short = (
+                (tpl.message[:15] + "...") if len(tpl.message) > 15 else tpl.message
+            )
+            table.add_row(
+                tpl.name, recipient_short, mosaics_str, message_short, key=tpl.id
+            )
+
+    def _format_mosaics(self, mosaics: list) -> str:
+        if not mosaics:
+            return "(none)"
+        if len(mosaics) == 1:
+            amount = mosaics[0].get("amount", 0) / 1_000_000
+            return f"{amount:,.2f}"
+        return f"{len(mosaics)} mosaics"
+
+    def _get_selected_id(self) -> str | None:
+        if not self.templates:
+            return None
+        table = cast(DataTable, self.query_one("#templates-table"))
+        cursor_row = table.cursor_row
+        if cursor_row is not None and 0 <= cursor_row < len(self._template_ids):
+            return self._template_ids[cursor_row]
+        return None
+
+    def on_data_table_row_selected(self, event):
+        self._use_selected()
+
+    def action_use(self) -> None:
+        self._use_selected()
+
+    def _use_selected(self) -> None:
+        template_id = self._get_selected_id()
+        if template_id:
+            for tpl in self.templates:
+                if tpl.id == template_id:
+                    self.post_message(self.UseTemplateRequested(template=tpl))
+                    self.app.pop_screen()
+                    return
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "use-button":
+            self._use_selected()
+        elif event.button.id == "delete-button":
+            template_id = self._get_selected_id()
+            if template_id:
+                self.post_message(self.DeleteTemplateRequested(template_id=template_id))
+        elif event.button.id == "close-button":
+            self.app.pop_screen()
+
+    class UseTemplateRequested(Message):
+        def __init__(self, template):
+            super().__init__()
+            self.template = template
+
+    class DeleteTemplateRequested(Message):
+        def __init__(self, template_id: str):
+            super().__init__()
+            self.template_id = template_id

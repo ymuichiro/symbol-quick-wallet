@@ -51,12 +51,11 @@ def test_get_account_balances_normalizes_mosaics(monkeypatch):
         }
     }
 
-    def fake_get(url, timeout):
-        return DummyResponse(200, account_payload)
-
-    monkeypatch.setattr(requests, "get", fake_get)
+    def fake_get_optional(endpoint, context=""):
+        return account_payload
 
     wallet = create_loaded_wallet()
+    monkeypatch.setattr(wallet._network_client, "get_optional", fake_get_optional)
     wallet._currency_mosaic_id = Wallet.XYM_MOSAIC_ID
     result = wallet.get_account_balances("TBGPWGP56HIAUYLNCPEKLSY6FLG3Y7YQZA43NZQ")
 
@@ -77,10 +76,10 @@ def test_get_registered_address_balances(monkeypatch):
         }
     }
 
-    def fake_get(url, timeout):
-        return DummyResponse(200, account_payload)
+    def fake_get_optional(endpoint, context=""):
+        return account_payload
 
-    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(wallet._network_client, "get_optional", fake_get_optional)
 
     wallet.address_book = {
         "TBGPWGP56HIAUYLNCPEKLSY6FLG3Y7YQZA43NZQ": {
@@ -194,7 +193,9 @@ def test_live_send_and_confirm_transaction():
         )
 
     network_name = os.getenv("SYMBOL_TEST_NETWORK", "testnet")
-    node_url = os.getenv("SYMBOL_TEST_NODE_URL", "http://sym-test-01.opening-line.jp:3000")
+    node_url = os.getenv(
+        "SYMBOL_TEST_NODE_URL", "http://sym-test-01.opening-line.jp:3000"
+    )
     transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
     recipient_address_override = os.getenv("SYMBOL_TEST_RECIPIENT_ADDRESS", "").strip()
     confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "180"))

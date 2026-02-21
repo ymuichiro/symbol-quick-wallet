@@ -66,6 +66,7 @@ from src.screens import (
     NetworkSelectorScreen,
     PasswordScreen,
     QRCodeScreen,
+    QRScannerScreen,
     SetupPasswordScreen,
     TransactionConfirmScreen,
     TransactionResultScreen,
@@ -550,6 +551,7 @@ class WalletApp(App):
             )
             yield Horizontal(
                 Button("📒 Select Address", id="select-address-button"),
+                Button("📷 Scan QR", id="scan-qr-button"),
                 Button("📤 Send", id="send-button", variant="primary"),
                 id="transfer-actions-row",
             )

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, cast
 
-import requests
 from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
+
+from src.network import NetworkClient, NetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,15 @@ class TransactionManager:
         self.wallet = wallet
         self.facade = SymbolFacade(wallet.network_name)
         self.node_url = node_url
+        self._network_client = NetworkClient(
+            node_url=node_url,
+            timeout_config=wallet.config.timeout_config
+            if hasattr(wallet, "config")
+            else None,
+            retry_config=wallet.config.retry_config
+            if hasattr(wallet, "config")
+            else None,
+        )
 
     def _require_wallet_loaded(self) -> None:
         if not self.wallet.private_key or not self.wallet.public_key:
@@ -70,7 +81,9 @@ class TransactionManager:
 
         return [
             {"mosaic_id": mosaic_id, "amount": amount}
-            for mosaic_id, amount in sorted(aggregated.items(), key=lambda item: item[0])
+            for mosaic_id, amount in sorted(
+                aggregated.items(), key=lambda item: item[0]
+            )
         ]
 
     def _normalize_message(self, message: str | None) -> str:
@@ -114,7 +127,9 @@ class TransactionManager:
     def attach_signature(self, transaction, signature):
         return self.facade.transaction_factory.attach_signature(transaction, signature)
 
-    def calculate_transaction_hash_from_signed_payload(self, signed_payload: str) -> str:
+    def calculate_transaction_hash_from_signed_payload(
+        self, signed_payload: str
+    ) -> str:
         payload_obj = json.loads(signed_payload)
         payload_hex = payload_obj["payload"]
         signed_tx = sc.TransactionFactory.deserialize(bytes.fromhex(payload_hex))
@@ -130,48 +145,20 @@ class TransactionManager:
 
     def announce_transaction(self, signed_payload):
         try:
-            url = f"{self.node_url}/transactions"
-            response = requests.put(
-                url,
+            result = self._network_client.put(
+                "/transactions",
+                context="Announce transaction",
                 data=signed_payload,
                 headers={"Content-Type": "application/json"},
-                timeout=10,
             )
-            response.raise_for_status()
-            if response.content:
-                try:
-                    result = response.json()
-                except ValueError:
-                    result = {"message": response.text}
-            else:
-                result = {"message": ""}
             logger.info(
                 "Transaction announced successfully: %s",
                 result.get("message", "unknown"),
             )
             return result
-        except requests.exceptions.Timeout as exc:
-            logger.error("Connection timeout announcing transaction: %s", self.node_url)
-            raise Exception(
-                f"Connection timeout. Node may be unavailable: {self.node_url}"
-            ) from exc
-        except requests.exceptions.ConnectionError as exc:
-            logger.error("Cannot connect to node: %s", self.node_url)
-            raise Exception(
-                f"Cannot connect to node: {self.node_url}. Check your network connection."
-            ) from exc
-        except requests.exceptions.HTTPError as exc:
-            status_code = exc.response.status_code if exc.response is not None else "?"
-            error_detail = (
-                exc.response.text
-                if exc.response is not None and exc.response.text
-                else "Unknown error"
-            )
-            logger.error("HTTP error announcing transaction: %s", status_code)
-            raise Exception(f"HTTP error {status_code}: {error_detail}") from exc
-        except Exception as exc:
-            logger.error("Failed to announce transaction: %s", str(exc))
-            raise Exception(f"Failed to announce transaction: {str(exc)}") from exc
+        except NetworkError as e:
+            logger.error("Failed to announce transaction: %s", e.message)
+            raise Exception(e.message) from e
 
     def _sign_attach_and_announce(self, transaction) -> dict[str, Any]:
         signature = self.sign_transaction(transaction)
@@ -208,23 +195,25 @@ class TransactionManager:
         timeout_seconds: int = 180,
         poll_interval_seconds: int = 5,
     ) -> dict[str, Any]:
-        import time
-
         normalized_hash = tx_hash.strip().upper()
         deadline = time.time() + timeout_seconds
 
         while time.time() < deadline:
-            response = requests.post(
-                f"{self.node_url}/transactionStatus",
-                json={"hashes": [normalized_hash]},
-                timeout=10,
-            )
-            response.raise_for_status()
-            statuses = response.json()
-            if statuses:
-                status = statuses[0]
-                if status.get("group") in {"confirmed", "failed"}:
-                    return status
+            try:
+                response = self._network_client.post(
+                    "/transactionStatus",
+                    context="Check transaction status",
+                    json={"hashes": [normalized_hash]},
+                )
+                statuses = cast(
+                    list[dict[str, Any]], response if isinstance(response, list) else []
+                )
+                if statuses:
+                    status = statuses[0]
+                    if status.get("group") in {"confirmed", "failed"}:
+                        return status
+            except NetworkError:
+                pass
             time.sleep(poll_interval_seconds)
 
         raise TimeoutError(

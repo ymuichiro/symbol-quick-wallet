@@ -1738,3 +1738,113 @@ class DeleteAccountConfirmScreen(BaseModalScreen):
         def __init__(self, index: int):
             super().__init__()
             self.index = index
+
+
+class QRScannerScreen(BaseModalScreen):
+    def __init__(self):
+        super().__init__()
+        self._scanner = None
+        self._scanned = False
+
+    def compose(self) -> ComposeResult:
+        yield Label("📷 Scan QR Code")
+        yield Label("Point your camera at a Symbol address or transaction QR code")
+        yield Static("", id="scanner-status")
+        yield Static("", id="scanner-preview")
+        yield Horizontal(
+            Button("📷 Start Scanner", id="start-scanner-button", variant="primary"),
+            Button("📋 Paste from Clipboard", id="paste-button"),
+            Button("❌ Cancel", id="cancel-button"),
+        )
+
+    def on_mount(self) -> None:
+        self._update_status("Ready to scan. Click 'Start Scanner' to begin.")
+
+    def _update_status(self, text: str) -> None:
+        try:
+            status = cast(Static, self.query_one("#scanner-status"))
+            status.update(text)
+        except Exception:
+            pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "start-scanner-button":
+            self._start_scanning()
+        elif event.button.id == "paste-button":
+            self._paste_from_clipboard()
+        elif event.button.id == "cancel-button":
+            self._stop_scanning()
+            self.app.pop_screen()
+
+    def _start_scanning(self) -> None:
+        try:
+            from src.qr_scanner import QRScanner, scan_qr_from_camera
+
+            scanner = QRScanner()
+            if not scanner.is_camera_available():
+                self._update_status(
+                    "[red]No camera available. Try pasting from clipboard.[/red]"
+                )
+                return
+
+            self._update_status("[yellow]Scanning... Point camera at QR code[/yellow]")
+            self._scanner = scan_qr_from_camera(
+                on_scan=self._on_qr_scanned, on_error=self._on_scan_error
+            )
+        except ImportError as e:
+            self._update_status(f"[red]Scanner libraries not installed: {e}[/red]")
+        except Exception as e:
+            self._update_status(f"[red]Failed to start scanner: {e}[/red]")
+
+    def _stop_scanning(self) -> None:
+        if self._scanner is not None:
+            try:
+                self._scanner.stop_scanning()
+            except Exception:
+                pass
+            self._scanner = None
+
+    def _on_qr_scanned(self, data) -> None:
+        if self._scanned:
+            return
+        self._scanned = True
+        self._stop_scanning()
+
+        def post_result():
+            self.post_message(self.QRCodeScanned(data=data))
+            self.app.pop_screen()
+
+        self.app.call_from_thread(post_result)
+
+    def _on_scan_error(self, error: str) -> None:
+        def update():
+            self._update_status(f"[red]Error: {error}[/red]")
+
+        self.app.call_from_thread(update)
+
+    def _paste_from_clipboard(self) -> None:
+        try:
+            import pyperclip
+
+            text = pyperclip.paste()
+            if text:
+                self._process_qr_text(text)
+            else:
+                self._update_status("[yellow]Clipboard is empty[/yellow]")
+        except Exception as e:
+            self._update_status(f"[red]Failed to read clipboard: {e}[/red]")
+
+    def _process_qr_text(self, text: str) -> None:
+        from src.qr_scanner import QRScanner
+
+        data = QRScanner.parse_symbol_qr(text)
+        self.post_message(self.QRCodeScanned(data=data))
+        self.app.pop_screen()
+
+    def on_unmount(self) -> None:
+        self._stop_scanning()
+
+    class QRCodeScanned(Message):
+        def __init__(self, data):
+            super().__init__()
+            self.data = data

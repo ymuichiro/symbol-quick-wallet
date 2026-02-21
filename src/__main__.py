@@ -51,10 +51,14 @@ from src.screens import (
     AddressBookSelectorScreen,
     BatchTransactionResultScreen,
     CommandSelectorScreen,
+    ContactGroupsScreen,
+    CreateGroupScreen,
     CreateMosaicScreen,
     DeleteAccountConfirmScreen,
+    DeleteGroupConfirmScreen,
     EditAccountScreen,
     EditAddressScreen,
+    EditGroupScreen,
     ExportKeyScreen,
     FirstRunImportWalletScreen,
     FirstRunSetupScreen,
@@ -65,6 +69,7 @@ from src.screens import (
     ImportWalletScreen,
     LoadingScreen,
     MosaicInputScreen,
+    MosaicMetadataScreen,
     NetworkSelectorScreen,
     PasswordScreen,
     QRCodeScreen,
@@ -2077,15 +2082,17 @@ class WalletApp(App):
 
     def show_address_book_selector(self):
         addresses = self.wallet.get_addresses()
+        groups = self.wallet.get_contact_groups()
         if addresses:
-            self.push_screen(AddressBookSelectorScreen(addresses))
+            self.push_screen(AddressBookSelectorScreen(addresses, groups))
         else:
             cast(Static, self.query_one("#transfer-result")).update(
                 "[yellow]No addresses in address book[/yellow]"
             )
 
     def show_add_address_dialog(self):
-        self.push_screen(AddAddressScreen())
+        groups = self.wallet.get_contact_groups()
+        self.push_screen(AddAddressScreen(groups))
 
     def remove_selected_address(self):
         table = cast(DataTable, self.query_one("#address-book-table"))
@@ -2178,10 +2185,12 @@ class WalletApp(App):
 
     def show_address_book(self):
         addresses = self.wallet.get_addresses()
-        self.push_screen(AddressBookScreen(addresses))
+        groups = self.wallet.get_contact_groups()
+        self.push_screen(AddressBookScreen(addresses, groups))
 
-    def show_edit_address_dialog(self, address, name, note):
-        self.push_screen(EditAddressScreen(address, name, note))
+    def show_edit_address_dialog(self, address, name, note, group_id=None):
+        groups = self.wallet.get_contact_groups()
+        self.push_screen(EditAddressScreen(address, name, note, groups, group_id))
 
     def show_create_mosaic_dialog(self):
         self.push_screen(CreateMosaicScreen())
@@ -2315,8 +2324,10 @@ class WalletApp(App):
         self._submit_transaction_async(event.recipient, event.mosaics, event.message)
 
     def on_add_address_dialog_submitted(self, event):
-        self.wallet.add_address(event.address, event.name, event.note)
+        group_id = getattr(event, "group_id", None)
+        self.wallet.add_address(event.address, event.name, event.note, group_id)
         self.update_address_book()
+        self.notify("Address added successfully", severity="information")
 
     def on_import_wallet_dialog_submitted(self, event):
         try:
@@ -2334,7 +2345,9 @@ class WalletApp(App):
         self.action_switch_tab("transfer")
 
     def on_edit_address(self, event):
-        self.show_edit_address_dialog(event.address, event.name, event.note)
+        self.show_edit_address_dialog(
+            event.address, event.name, event.note, getattr(event, "group_id", None)
+        )
 
     def on_delete_address(self, event):
         self.wallet.remove_address(event.address)
@@ -2342,7 +2355,9 @@ class WalletApp(App):
         self.notify("Address deleted successfully", severity="information")
 
     def on_edit_address_dialog_submitted(self, event):
-        self.wallet.update_address(event.address, event.name, event.note)
+        self.wallet.update_address(
+            event.address, event.name, event.note, group_id=event.group_id
+        )
         self.update_address_book()
         self.notify("Address updated successfully", severity="information")
 
@@ -2573,6 +2588,65 @@ class WalletApp(App):
         """Show QR code of wallet address."""
         if self.wallet.address:
             self.push_screen(QRCodeScreen(self.wallet.get_address()))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle data table row selection."""
+        if event.data_table.id == "balance-table":
+            self._show_mosaic_metadata_from_table(event)
+
+    def _show_mosaic_metadata_from_table(self, event) -> None:
+        """Show mosaic metadata when a row is selected in balance table."""
+        try:
+            balance_table = cast(DataTable, self.query_one("#balance-table"))
+            cursor_row = balance_table.cursor_row
+            if cursor_row is None:
+                return
+
+            mosaics = self.wallet.get_balance()
+            if cursor_row >= len(mosaics):
+                return
+
+            selected_mosaic = mosaics[cursor_row]
+            mosaic_id = selected_mosaic.get("id")
+            if mosaic_id is None:
+                return
+
+            self._show_mosaic_metadata(mosaic_id)
+        except Exception as e:
+            logger.error(f"Error showing mosaic metadata: {e}")
+            self.notify(f"Failed to load mosaic info: {e}", severity="error")
+
+    def _show_mosaic_metadata(self, mosaic_id: int) -> None:
+        """Fetch and display mosaic metadata."""
+        loading_screen = LoadingScreen("Loading mosaic info...")
+        self.push_screen(loading_screen)
+
+        def worker() -> None:
+            try:
+                mosaic_info = self.wallet.get_mosaic_full_info(mosaic_id)
+                self.call_from_thread(
+                    self._on_mosaic_metadata_loaded, mosaic_info, None
+                )
+            except Exception as e:
+                self.call_from_thread(self._on_mosaic_metadata_loaded, None, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_mosaic_metadata_loaded(
+        self, mosaic_info: dict | None, error: str | None
+    ) -> None:
+        """Handle mosaic metadata load completion."""
+        try:
+            self.pop_screen()
+        except Exception:
+            pass
+
+        if error:
+            self.notify(f"Failed to load mosaic info: {error}", severity="error")
+            return
+
+        if mosaic_info:
+            self.push_screen(MosaicMetadataScreen(mosaic_info))
 
     def on_network_selector_screen_network_selected(self, event):
         """Handle network selection."""
@@ -2822,6 +2896,41 @@ class WalletApp(App):
         message = event.data.get("message")
         if message:
             cast(Input, self.query_one("#message-input")).value = message
+
+    def on_address_book_screen_manage_groups(self, event) -> None:
+        groups = self.wallet.get_contact_groups()
+        self.push_screen(ContactGroupsScreen(groups))
+
+    def on_address_book_selector_screen_manage_groups(self, event) -> None:
+        groups = self.wallet.get_contact_groups()
+        self.push_screen(ContactGroupsScreen(groups))
+
+    def on_contact_groups_screen_create_group_requested(self, event) -> None:
+        self.push_screen(CreateGroupScreen())
+
+    def on_contact_groups_screen_edit_group_requested(self, event) -> None:
+        self.push_screen(EditGroupScreen(event.group_id, event.name, event.color))
+
+    def on_contact_groups_screen_delete_group_requested(self, event) -> None:
+        group = self.wallet.get_contact_group(event.group_id)
+        group_name = group.get("name", "") if group else ""
+        self.push_screen(DeleteGroupConfirmScreen(event.group_id, group_name))
+
+    def on_create_group_screen_create_group_submitted(self, event) -> None:
+        self.wallet.create_contact_group(event.name)
+        self.notify(
+            f"Group '{event.name}' created successfully", severity="information"
+        )
+
+    def on_edit_group_screen_edit_group_submitted(self, event) -> None:
+        self.wallet.update_contact_group(event.group_id, event.name, event.color)
+        self.notify(
+            f"Group '{event.name}' updated successfully", severity="information"
+        )
+
+    def on_delete_group_confirm_screen_delete_group_confirmed(self, event) -> None:
+        self.wallet.delete_contact_group(event.group_id)
+        self.notify("Group deleted successfully", severity="information")
 
 
 def main():

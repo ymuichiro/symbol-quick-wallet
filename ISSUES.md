@@ -21,7 +21,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 
 ## Add input validation for transfer amounts
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: high
 
 Users can input invalid amounts (negative, too many decimals, etc.) which may cause confusing errors.

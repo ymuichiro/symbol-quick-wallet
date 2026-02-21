@@ -10,6 +10,7 @@ Allow users to manage multiple accounts/wallets within the same application.
 - Separate address books per account or shared
 - Account labels/nicknames
 ---
+---
 
 ---
 
@@ -24,6 +25,7 @@ Allow users to prepare multiple transactions and batch submit them.
 - Reduce network calls
 - Aggregate fees display
 ---
+---
 
 ---
 
@@ -37,6 +39,7 @@ Allow users to scan QR codes to import addresses for transfers.
 - Integrate camera access
 - Parse Symbol QR code format
 - Support both address and transaction QR codes
+---
 ---
 
 ---
@@ -54,6 +57,7 @@ Display mosaic metadata and properties when viewing balances.
 - Owner address
 - Description
 ---
+---
 
 ---
 
@@ -68,12 +72,13 @@ Organize address book contacts into groups for easier management.
 - Assign contacts to groups
 - Filter by group in transfer screen
 ---
+---
 
 ---
 
 ## Add transaction templates
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: low
 
 Save frequently used transfer configurations as templates.

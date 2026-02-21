@@ -12,6 +12,15 @@ Header {
     height: 3;
 }
 
+#connection-status {
+    background: #181825;
+    color: #a6adc8;
+    padding: 0 2;
+    height: 1;
+    text-align: right;
+    dock: top;
+}
+
 Footer {
     background: #181825;
     height: 2;

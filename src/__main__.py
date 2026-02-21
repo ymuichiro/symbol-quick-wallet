@@ -62,6 +62,7 @@ from src.screens import (
     ImportAccountKeyScreen,
     ImportEncryptedKeyScreen,
     ImportWalletScreen,
+    LoadingScreen,
     MosaicInputScreen,
     NetworkSelectorScreen,
     PasswordScreen,
@@ -71,7 +72,13 @@ from src.screens import (
     TransactionConfirmScreen,
     TransactionResultScreen,
 )
-from src.network import NetworkError
+from src.connection_state import (
+    ConnectionMonitor,
+    ConnectionMonitorConfig,
+    ConnectionState,
+    get_connection_state_message,
+)
+from src.network import NetworkError, NetworkErrorType
 from src.styles import CSS
 from src.transaction import TransactionManager
 from src.wallet import Wallet
@@ -94,6 +101,65 @@ class WalletApp(App):
     _transfer_loading_active = False
     _transfer_loading_step = 0
     _transfer_loading_timer = None
+    _network_loading_active = False
+    _network_loading_step = 0
+    _network_loading_timer = None
+    _network_loading_widget = None
+    _loading_screen: LoadingScreen | None = None
+    _connection_monitor: ConnectionMonitor | None = None
+    _previous_connection_state: ConnectionState = ConnectionState.UNKNOWN
+
+    def _format_network_error(self, error: Exception) -> str:
+        """Format a network error with meaningful user-friendly message."""
+        if isinstance(error, NetworkError):
+            if error.error_type == NetworkErrorType.TIMEOUT:
+                return f"Connection timeout. The node at {self.wallet.node_url} is not responding. Please try again or switch to a different node."
+            elif error.error_type == NetworkErrorType.CONNECTION_ERROR:
+                return f"Cannot connect to node. Please check your internet connection and verify the node URL: {self.wallet.node_url}"
+            elif error.error_type == NetworkErrorType.HTTP_ERROR:
+                status_info = (
+                    f" (HTTP {error.status_code})" if error.status_code else ""
+                )
+                return f"Server error{status_info}: {error.message}"
+            else:
+                return f"Network error: {error.message}"
+        return f"Error: {str(error)}"
+
+    def _start_network_loading(self, widget: Static, base_text: str) -> None:
+        """Start a loading animation on a widget."""
+        self._network_loading_active = True
+        self._network_loading_step = 0
+        self._network_loading_widget = widget
+        frames = ["|", "/", "-", "\\"]
+        widget.update(f"[yellow]{base_text} {frames[0]}[/yellow]")
+
+        def tick() -> None:
+            if not self._network_loading_active:
+                return
+            self._network_loading_step = (self._network_loading_step + 1) % len(frames)
+            frame = frames[self._network_loading_step]
+            if self._network_loading_widget:
+                self._network_loading_widget.update(
+                    f"[yellow]{base_text} {frame}[/yellow]"
+                )
+
+        if self._network_loading_timer:
+            try:
+                self._network_loading_timer.stop()
+            except Exception:
+                pass
+        self._network_loading_timer = self.set_interval(0.15, tick)
+
+    def _stop_network_loading(self) -> None:
+        """Stop the loading animation."""
+        self._network_loading_active = False
+        if self._network_loading_timer:
+            try:
+                self._network_loading_timer.stop()
+            except Exception:
+                pass
+            self._network_loading_timer = None
+        self._network_loading_widget = None
 
     def action_show_command_selector(self) -> None:
         self.show_command_selector()
@@ -169,6 +235,9 @@ class WalletApp(App):
         logger.info("=" * 80)
         self.set_focus(None)
 
+    def on_unmount(self) -> None:
+        self._stop_connection_monitoring()
+
     def unlock_wallet(self, password: str, screen) -> bool:
         """Unlock wallet directly from password screen.
 
@@ -201,23 +270,21 @@ class WalletApp(App):
             logger.info("[unlock_wallet] Wallet loaded successfully")
             self.is_authenticated = True
 
-            logger.info("[unlock_wallet] Updating UI components")
-            self.update_dashboard()
-            self.update_address_book()
-            self.update_settings()
-            self.update_mosaics_table()
-
-            logger.info("[unlock_wallet] Hiding all tabs and showing dashboard")
+            logger.info("[unlock_wallet] Hiding all tabs and showing loading screen")
             self.hide_all_tabs()
-            self.query_one("#dashboard-tab").display = "block"
-            self.tabs.display = "block"
-            self.action_focus_next()
-            self.password_retry_count = 0
+            self._loading_screen = LoadingScreen(
+                "Loading wallet data...", show_progress=True
+            )
+            self.push_screen(self._loading_screen)
 
-            logger.info("[unlock_wallet] Showing success notification")
-            current_account = self.wallet.get_current_account()
-            label = current_account.label if current_account else "Wallet"
-            self.notify(f"{label} unlocked successfully!", severity="information")
+            def worker() -> None:
+                try:
+                    self._async_update_wallet_data()
+                    self.call_from_thread(self._on_unlock_data_loaded, None)
+                except Exception as e:
+                    self.call_from_thread(self._on_unlock_data_loaded, e)
+
+            threading.Thread(target=worker, daemon=True).start()
 
             logger.info("[unlock_wallet] ========== UNLOCK WALLET SUCCESS ==========")
             logger.info("")
@@ -235,6 +302,131 @@ class WalletApp(App):
             logger.info("")
 
             return False
+
+    def _async_update_wallet_data(self) -> None:
+        """Update wallet data in background thread."""
+        self.update_dashboard()
+        self.update_address_book()
+        self.update_settings()
+        self.update_mosaics_table()
+
+    def _on_unlock_data_loaded(self, error: Exception | None) -> None:
+        """Handle completion of async wallet data loading."""
+        if self._loading_screen:
+            try:
+                self.app.pop_screen()
+            except Exception:
+                pass
+            self._loading_screen = None
+
+        if error:
+            error_msg = self._format_network_error(error)
+            self.notify(f"Error loading wallet data: {error_msg}", severity="warning")
+
+        self.query_one("#dashboard-tab").display = "block"
+        self.tabs.display = "block"
+        self.action_focus_next()
+        self.password_retry_count = 0
+
+        current_account = self.wallet.get_current_account()
+        label = current_account.label if current_account else "Wallet"
+        self.notify(f"{label} unlocked successfully!", severity="information")
+
+        self._start_connection_monitoring()
+
+    def _start_connection_monitoring(self) -> None:
+        if self._connection_monitor:
+            return
+
+        def on_state_change(
+            old_state: ConnectionState,
+            new_state: ConnectionState,
+            status,
+        ) -> None:
+            self._handle_connection_state_change(old_state, new_state, status)
+
+        config = ConnectionMonitorConfig(
+            check_interval_seconds=30.0,
+            failure_threshold=2,
+            recovery_threshold=1,
+        )
+        self._connection_monitor = ConnectionMonitor(
+            node_url=self.wallet.node_url,
+            config=config,
+            on_state_change=on_state_change,
+        )
+        self._connection_monitor.start()
+        logger.info("Connection monitoring started for node: %s", self.wallet.node_url)
+
+    def _handle_connection_state_change(
+        self,
+        old_state: ConnectionState,
+        new_state: ConnectionState,
+        status,
+    ) -> None:
+        if old_state == new_state:
+            return
+
+        self._previous_connection_state = new_state
+        title, message = get_connection_state_message(new_state)
+
+        logger.info(
+            "Connection state changed: %s -> %s",
+            old_state.value,
+            new_state.value,
+        )
+
+        try:
+            if new_state == ConnectionState.ONLINE:
+                self.call_from_thread(
+                    self.notify,
+                    f"{title}: {message}",
+                    severity="information",
+                    timeout=5,
+                )
+                self.call_from_thread(self._update_connection_status_display)
+            elif new_state == ConnectionState.OFFLINE:
+                self.call_from_thread(
+                    self.notify,
+                    f"{title}: {message}",
+                    severity="error",
+                    timeout=10,
+                )
+                self.call_from_thread(self._update_connection_status_display)
+            elif new_state == ConnectionState.NODE_UNREACHABLE:
+                self.call_from_thread(
+                    self.notify,
+                    f"{title}: {message}",
+                    severity="warning",
+                    timeout=8,
+                )
+                self.call_from_thread(self._update_connection_status_display)
+        except Exception as e:
+            logger.error("Error handling connection state change: %s", e)
+
+    def _update_connection_status_display(self) -> None:
+        try:
+            status_widget = cast(Static, self.query_one("#connection-status"))
+            if self._connection_monitor is None:
+                return
+
+            status = self._connection_monitor.status
+            if status.state == ConnectionState.ONLINE:
+                status_widget.update("[green]● Online[/green]")
+            elif status.state == ConnectionState.OFFLINE:
+                status_widget.update("[red]● Offline[/red]")
+            elif status.state == ConnectionState.NODE_UNREACHABLE:
+                status_widget.update("[yellow]● Node Unreachable[/yellow]")
+            else:
+                status_widget.update("[dim]● Unknown[/dim]")
+        except Exception as e:
+            logger.debug("Could not update connection status display: %s", e)
+
+    def _stop_connection_monitoring(self) -> None:
+        if self._connection_monitor:
+            self._connection_monitor.stop()
+            self._connection_monitor = None
+            logger.info("Connection monitoring stopped")
 
     def on_password_dialog_submitted(self, event):
         """Handle password dialog submission."""
@@ -513,6 +705,7 @@ class WalletApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("[dim]● Checking...[/dim]", id="connection-status")
         self.tabs = Tabs(
             Tab("Dashboard", id="dashboard-tab-btn"),
             Tab("Transfer", id="transfer-tab-btn"),
@@ -994,8 +1187,13 @@ class WalletApp(App):
                     f"[update_dashboard] Step 2: ERROR updating harvesting-status: {e}",
                     exc_info=True,
                 )
+                error_msg = (
+                    self._format_network_error(e)
+                    if isinstance(e, NetworkError)
+                    else str(e)
+                )
                 harvesting_status.update(
-                    f"[red]Harvesting Status: Error - {str(e)}[/red]"
+                    f"[red]Harvesting Status: Error - {error_msg}[/red]"
                 )
 
             logger.info("[update_dashboard] Step 3: Updating balance-table")
@@ -1033,7 +1231,7 @@ class WalletApp(App):
                 )
                 balance_table.clear(columns=True)
                 balance_table.add_column("Error", key="error")
-                balance_table.add_row(f"Unable to fetch balance: {e.message}")
+                balance_table.add_row(self._format_network_error(e))
             except Exception as e:
                 logger.error(
                     f"[update_dashboard] Step 3: ERROR updating balance-table: {e}",
@@ -1174,7 +1372,7 @@ class WalletApp(App):
                     "Received" if direction == "incoming" else "Sent",
                 )
         except NetworkError as e:
-            table.add_row("[red]Error[/red]", e.message, "", "")
+            table.add_row("[red]Error[/red]", self._format_network_error(e), "", "")
         except Exception as e:
             table.add_row("[red]Error[/red]", str(e), "", "")
 
@@ -1286,11 +1484,11 @@ class WalletApp(App):
             logger.info("[on_button_pressed] Action: remove_selected_address")
             self.remove_selected_address()
         elif button_id == "refresh-history-button":
-            logger.info("[on_button_pressed] Action: update_history")
-            self.update_history()
+            logger.info("[on_button_pressed] Action: refresh_history_async")
+            self.refresh_history_async()
         elif button_id == "refresh-dashboard-button":
-            logger.info("[on_button_pressed] Action: update_dashboard")
-            self.update_dashboard()
+            logger.info("[on_button_pressed] Action: refresh_dashboard_async")
+            self.refresh_dashboard_async()
         elif button_id == "view-address-book-button":
             logger.info("[on_button_pressed] Action: show_address_book")
             self.show_address_book()
@@ -1604,6 +1802,8 @@ class WalletApp(App):
             self.wallet.node_url = "http://sym-test-01.opening-line.jp:3000"
         elif self.wallet.network_name == "mainnet":
             self.wallet.node_url = "http://sym-main-01.opening-line.jp:3000"
+        if self._connection_monitor:
+            self._connection_monitor.update_node_url(self.wallet.node_url)
         self.notify("Node URL reset to default", severity="information")
 
     def test_node_connection(self):
@@ -1613,23 +1813,44 @@ class WalletApp(App):
             self.notify("Node URL is empty", severity="error")
             return
 
-        try:
-            logger.info("Testing node connection: %s", node_url)
-            connection_result = self.wallet.test_node_connection(node_url)
-            if connection_result["healthy"]:
-                self.notify(
-                    f"Connection successful: api={connection_result['apiNode']} height={connection_result['networkHeight']}",
-                    severity="information",
+        self.notify("Testing connection...", severity="information")
+
+        def worker() -> None:
+            try:
+                logger.info("Testing node connection: %s", node_url)
+                connection_result = self.wallet.test_node_connection(node_url)
+                self.call_from_thread(
+                    self._on_node_connection_test_finished, connection_result, None
                 )
-            else:
-                self.notify(
-                    f"Connection failed: api={connection_result['apiNode']}",
-                    severity="warning",
-                )
-        except Exception as e:
-            error_msg = str(e)
+            except Exception as e:
+                self.call_from_thread(self._on_node_connection_test_finished, None, e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_node_connection_test_finished(
+        self, result: dict | None, error: Exception | None
+    ) -> None:
+        if error:
+            error_msg = (
+                self._format_network_error(error)
+                if isinstance(error, NetworkError)
+                else str(error)
+            )
             logger.error("Node connection test failed: %s", error_msg)
             self.notify(f"Connection test failed: {error_msg}", severity="error")
+            return
+
+        if result and result.get("healthy"):
+            self.notify(
+                f"Connection successful: api={result['apiNode']} height={result['networkHeight']}",
+                severity="information",
+            )
+        else:
+            api_status = result.get("apiNode", "unknown") if result else "unknown"
+            self.notify(
+                f"Connection failed: api={api_status}",
+                severity="warning",
+            )
 
     def create_new_wallet(self):
         self.wallet.create_wallet()
@@ -1889,41 +2110,60 @@ class WalletApp(App):
 
     def add_mosaic(self):
         """Show mosaic input dialog to add a mosaic to transaction."""
-        try:
-            owned_mosaics = self.wallet.get_balance()
-            mosaic_list = []
-            for m in owned_mosaics:
-                mosaic_id = m.get("id")
-                mosaic_name = self.wallet.get_mosaic_name(mosaic_id)
-                amount = m.get("amount", 0)
-                try:
-                    amount = int(amount)
-                except (ValueError, TypeError):
-                    amount = 0
-                divisibility = self._get_mosaic_divisibility(mosaic_id)
-                mosaic_list.append(
-                    {
-                        "id": mosaic_id,
-                        "name": mosaic_name,
-                        "amount": amount,
-                        "divisibility": divisibility,
-                        "human_amount": amount / (10**divisibility)
-                        if divisibility >= 0
-                        else amount,
-                    }
-                )
+        result_widget = cast(Static, self.query_one("#transfer-result"))
+        result_widget.update("[yellow]Fetching mosaics...[/yellow]")
 
-            if not mosaic_list:
-                cast(Static, self.query_one("#transfer-result")).update(
-                    "[yellow]No owned mosaics found[/yellow]"
-                )
-                return
+        def worker() -> None:
+            try:
+                owned_mosaics = self.wallet.get_balance()
+                mosaic_list = []
+                for m in owned_mosaics:
+                    mosaic_id = m.get("id")
+                    mosaic_name = self.wallet.get_mosaic_name(mosaic_id)
+                    amount = m.get("amount", 0)
+                    try:
+                        amount = int(amount)
+                    except (ValueError, TypeError):
+                        amount = 0
+                    divisibility = self._get_mosaic_divisibility(mosaic_id)
+                    mosaic_list.append(
+                        {
+                            "id": mosaic_id,
+                            "name": mosaic_name,
+                            "amount": amount,
+                            "divisibility": divisibility,
+                            "human_amount": amount / (10**divisibility)
+                            if divisibility >= 0
+                            else amount,
+                        }
+                    )
 
-            self.push_screen(MosaicInputScreen(mosaic_list), self._on_mosaic_selected)
-        except Exception as e:
-            cast(Static, self.query_one("#transfer-result")).update(
-                f"[red]Error fetching mosaics: {str(e)}[/red]"
+                self.call_from_thread(self._on_mosaic_list_fetched, mosaic_list, None)
+            except Exception as e:
+                self.call_from_thread(self._on_mosaic_list_fetched, None, e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_mosaic_list_fetched(
+        self, mosaic_list: list | None, error: Exception | None
+    ) -> None:
+        result_widget = cast(Static, self.query_one("#transfer-result"))
+
+        if error:
+            error_msg = (
+                self._format_network_error(error)
+                if isinstance(error, NetworkError)
+                else str(error)
             )
+            result_widget.update(f"[red]{error_msg}[/red]")
+            return
+
+        if not mosaic_list:
+            result_widget.update("[yellow]No owned mosaics found[/yellow]")
+            return
+
+        result_widget.update("")
+        self.push_screen(MosaicInputScreen(mosaic_list), self._on_mosaic_selected)
 
     def _get_mosaic_divisibility(self, mosaic_id: int | None) -> int:
         if mosaic_id is None:
@@ -1956,6 +2196,67 @@ class WalletApp(App):
             self.notify("Invalid mosaic selection result", severity="error")
             return
         self._apply_added_mosaic(mosaic_id, amount)
+
+    def refresh_dashboard_async(self) -> None:
+        """Refresh dashboard with loading indicator."""
+        try:
+            balance_table = cast(DataTable, self.query_one("#balance-table"))
+            self._start_network_loading(
+                cast(Static, self.query_one("#harvesting-status")), "Refreshing"
+            )
+            balance_table.clear(columns=True)
+            balance_table.add_column("Status", key="status")
+            balance_table.add_row("[yellow]Loading...[/yellow]")
+        except Exception:
+            pass
+
+        def worker() -> None:
+            try:
+                self.call_from_thread(self._on_dashboard_refresh_finished, None)
+            except Exception as e:
+                self.call_from_thread(self._on_dashboard_refresh_finished, e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_dashboard_refresh_finished(self, error: Exception | None) -> None:
+        self._stop_network_loading()
+        if error:
+            self.notify(self._format_network_error(error), severity="error")
+        else:
+            self.update_dashboard()
+            self.notify("Dashboard refreshed", severity="information")
+
+    def refresh_history_async(self) -> None:
+        """Refresh history with loading indicator."""
+        try:
+            table = cast(DataTable, self.query_one("#history-table"))
+            table.clear(columns=True)
+            table.add_column("Status", key="status")
+            table.add_row("[yellow]Loading...[/yellow]")
+        except Exception:
+            pass
+
+        def worker() -> None:
+            try:
+                self.call_from_thread(self._on_history_refresh_finished, None)
+            except Exception as e:
+                self.call_from_thread(self._on_history_refresh_finished, e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_history_refresh_finished(self, error: Exception | None) -> None:
+        if error:
+            table = cast(DataTable, self.query_one("#history-table"))
+            table.clear(columns=True)
+            table.add_column("Error", key="error")
+            error_msg = (
+                self._format_network_error(error)
+                if isinstance(error, NetworkError)
+                else str(error)
+            )
+            table.add_row(f"[red]{error_msg}[/red]")
+        else:
+            self.update_history()
 
     def show_qr_code(self):
         """Show QR code of wallet address."""
@@ -2110,88 +2411,40 @@ class WalletApp(App):
             )
             raise
 
-        try:
-            logger.info("[finish_setup] Step 2: Updating dashboard")
-            self.update_dashboard()
-            logger.info("[finish_setup] Step 2: Dashboard updated successfully")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 2: ERROR updating dashboard: {str(e)}",
-                exc_info=True,
-            )
+        logger.info("[finish_setup] Step 2: Hiding all tabs and showing loading screen")
+        self.hide_all_tabs()
+        self._loading_screen = LoadingScreen("Setting up wallet...", show_progress=True)
+        self.push_screen(self._loading_screen)
 
-        try:
-            logger.info("[finish_setup] Step 3: Updating address book")
-            self.update_address_book()
-            logger.info("[finish_setup] Step 3: Address book updated successfully")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 3: ERROR updating address book: {str(e)}",
-                exc_info=True,
-            )
+        def worker() -> None:
+            try:
+                self._async_update_wallet_data()
+                self.call_from_thread(self._on_finish_setup_data_loaded, None)
+            except Exception as e:
+                self.call_from_thread(self._on_finish_setup_data_loaded, e)
 
-        try:
-            logger.info("[finish_setup] Step 4: Updating settings")
-            self.update_settings()
-            logger.info("[finish_setup] Step 4: Settings updated successfully")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 4: ERROR updating settings: {str(e)}",
-                exc_info=True,
-            )
+        threading.Thread(target=worker, daemon=True).start()
 
-        try:
-            logger.info("[finish_setup] Step 5: Updating mosaics table")
-            self.update_mosaics_table()
-            logger.info("[finish_setup] Step 5: Mosaics table updated successfully")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 5: ERROR updating mosaics table: {str(e)}",
-                exc_info=True,
-            )
+        logger.info("[finish_setup] ========== FINISH SETUP LOADING ASYNC ==========")
+        logger.info("")
 
-        try:
-            logger.info("[finish_setup] Step 6: Hiding all tabs")
-            self.hide_all_tabs()
-            logger.info("[finish_setup] Step 6: All tabs hidden successfully")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 6: ERROR hiding tabs: {str(e)}", exc_info=True
-            )
+    def _on_finish_setup_data_loaded(self, error: Exception | None) -> None:
+        """Handle completion of async setup data loading."""
+        if self._loading_screen:
+            try:
+                self.app.pop_screen()
+            except Exception:
+                pass
+            self._loading_screen = None
 
-        try:
-            logger.info("[finish_setup] Step 7: Showing dashboard tab")
-            dashboard_tab = self.query_one("#dashboard-tab")
-            if dashboard_tab:
-                dashboard_tab.display = "block"
-                logger.info(
-                    f"[finish_setup] Step 7: Dashboard tab display set to: {dashboard_tab.display}"
-                )
-            else:
-                logger.error("[finish_setup] Step 7: ERROR Dashboard tab not found!")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 7: ERROR showing dashboard: {str(e)}",
-                exc_info=True,
-            )
+        if error:
+            error_msg = self._format_network_error(error)
+            self.notify(f"Error loading wallet data: {error_msg}", severity="warning")
 
-        try:
-            logger.info("[finish_setup] Step 8: Showing tabs control")
-            self.tabs.display = "block"
-            logger.info(f"[finish_setup] Step 8: Tabs control set to visible")
-        except Exception as e:
-            logger.error(
-                f"[finish_setup] Step 8: ERROR showing tabs control: {str(e)}",
-                exc_info=True,
-            )
-
-        logger.info("[finish_setup] Step 9: Showing success notification")
+        self.query_one("#dashboard-tab").display = "block"
+        self.tabs.display = "block"
         self.notify("Setup completed successfully!", severity="information")
-        logger.info("[finish_setup] Step 9: Success notification shown")
-
-        logger.info("[finish_setup] Step 10: Setting focus to next widget")
         self.action_focus_next()
-        logger.info("[finish_setup] Step 10: Focus set")
 
         logger.info("[finish_setup] ========== FINISH SETUP COMPLETED ==========")
         logger.info("=" * 80)

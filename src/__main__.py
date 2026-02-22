@@ -1,31 +1,21 @@
 """Main application entry point for Symbol Quick Wallet."""
 
-import logging
 import threading
 import traceback
 from pathlib import Path
 from typing import cast
 
-# Create log directory if it doesn't exist
+from src.shared.logging import setup_logging, get_logger
+
 log_dir = Path.home() / ".symbol-quick-wallet"
 log_dir.mkdir(parents=True, exist_ok=True)
-log_file = log_dir / "wallet.log"
 
-# Configure logging - only write to file, not to stdout
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(log_file, mode="w"),
-    ],
-    force=True,
-)
+setup_logging()
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-# Log startup
 logger.info("Logging system initialized")
-logger.info(f"Log file: {log_file}")
+logger.info("Log file: %s", log_dir / "wallet.log")
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal
@@ -62,6 +52,8 @@ from src.features.address_book.handlers import AddressBookHandlersMixin
 from src.features.account.handlers import AccountHandlersMixin
 from src.features.mosaic.handlers import MosaicHandlersMixin
 from src.features.namespace.handlers import NamespaceHandlersMixin
+from src.features.multisig.handlers import MultisigHandlersMixin
+from src.features.metadata.handlers import MetadataHandlersMixin
 from src.shared.transaction_template import TemplateStorage
 from src.shared.transaction_queue import TransactionQueue
 from src.shared.connection_state import (
@@ -92,6 +84,8 @@ class WalletApp(
     AccountHandlersMixin,
     MosaicHandlersMixin,
     NamespaceHandlersMixin,
+    MultisigHandlersMixin,
+    MetadataHandlersMixin,
     App,
 ):
     CSS = CSS
@@ -990,6 +984,8 @@ class WalletApp(
                 ("👤 Account Manager", "accounts"),
                 ("📋 Transaction Templates", "templates"),
                 ("📛 Namespaces", "namespaces"),
+                ("🔐 Multisig Manager", "multisig"),
+                ("📝 Metadata", "metadata"),
                 ("⚙️ Show Config", "show_config"),
                 ("🌐 Network Testnet", "network_testnet"),
                 ("🌐 Network Mainnet", "network_mainnet"),
@@ -1108,6 +1104,10 @@ class WalletApp(
             self.view_templates()
         elif normalized == "namespaces":
             self.show_namespace_menu()
+        elif normalized == "multisig":
+            self.show_multisig_manager()
+        elif normalized == "metadata":
+            self.show_metadata_menu()
         else:
             self.notify(f"Unknown command: /{normalized}", severity="warning")
 

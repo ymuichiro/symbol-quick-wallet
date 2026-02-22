@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -9,10 +8,11 @@ from typing import Any, Callable, cast
 from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
+from src.shared.logging import get_logger
 from src.shared.network import NetworkClient, NetworkError
 from src.shared.validation import AmountValidator, MosaicIdValidator
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TransactionManager:
@@ -319,5 +319,257 @@ class TransactionManager:
             namespace_name,
             hex(mosaic_id),
             link_action,
+        )
+        return result
+
+    def create_account_metadata_transaction(
+        self,
+        target_address: str,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ):
+        self._require_wallet_loaded()
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        metadata_dict = {
+            "type": "account_metadata_transaction_v1",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "target_address": self._normalize_address(target_address),
+            "scoped_metadata_key": scoped_metadata_key,
+            "value": value,
+            "value_size_delta": value_size_delta,
+        }
+
+        metadata_tx = self.facade.transaction_factory.create(metadata_dict)
+        metadata_tx.fee = sc.Amount(metadata_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+        return metadata_tx
+
+    def create_mosaic_metadata_transaction(
+        self,
+        target_address: str,
+        mosaic_id: int,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ):
+        self._require_wallet_loaded()
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        metadata_dict = {
+            "type": "mosaic_metadata_transaction_v1",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "target_address": self._normalize_address(target_address),
+            "target_mosaic_id": mosaic_id,
+            "scoped_metadata_key": scoped_metadata_key,
+            "value": value,
+            "value_size_delta": value_size_delta,
+        }
+
+        metadata_tx = self.facade.transaction_factory.create(metadata_dict)
+        metadata_tx.fee = sc.Amount(metadata_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+        return metadata_tx
+
+    def create_namespace_metadata_transaction(
+        self,
+        target_address: str,
+        namespace_id: int,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ):
+        self._require_wallet_loaded()
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        metadata_dict = {
+            "type": "namespace_metadata_transaction_v1",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "target_address": self._normalize_address(target_address),
+            "target_namespace_id": namespace_id,
+            "scoped_metadata_key": scoped_metadata_key,
+            "value": value,
+            "value_size_delta": value_size_delta,
+        }
+
+        metadata_tx = self.facade.transaction_factory.create(metadata_dict)
+        metadata_tx.fee = sc.Amount(metadata_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+        return metadata_tx
+
+    def create_embedded_account_metadata(
+        self,
+        signer_public_key: str,
+        target_address: str,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> sc.EmbeddedTransaction:
+        descriptor = sc.AccountMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
+            target_address=sc.Address(self._normalize_address(target_address)),
+            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
+            value_size_delta=value_size_delta,
+            value=value,
+        )
+        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
+            descriptor, sc.PublicKey(signer_public_key)
+        )
+
+    def create_embedded_mosaic_metadata(
+        self,
+        signer_public_key: str,
+        target_address: str,
+        mosaic_id: int,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> sc.EmbeddedTransaction:
+        descriptor = sc.MosaicMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
+            target_address=sc.Address(self._normalize_address(target_address)),
+            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
+            target_mosaic_id=sc.UnresolvedMosaicId(mosaic_id),
+            value_size_delta=value_size_delta,
+            value=value,
+        )
+        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
+            descriptor, sc.PublicKey(signer_public_key)
+        )
+
+    def create_embedded_namespace_metadata(
+        self,
+        signer_public_key: str,
+        target_address: str,
+        namespace_id: int,
+        scoped_metadata_key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> sc.EmbeddedTransaction:
+        descriptor = sc.NamespaceMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
+            target_address=sc.Address(self._normalize_address(target_address)),
+            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
+            target_namespace_id=sc.NamespaceId(namespace_id),
+            value_size_delta=value_size_delta,
+            value=value,
+        )
+        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
+            descriptor, sc.PublicKey(signer_public_key)
+        )
+
+    def create_aggregate_complete_from_embedded(
+        self,
+        embedded_transactions: list[sc.EmbeddedTransaction],
+        fee_multiplier: int = 100,
+    ) -> sc.Transaction:
+        transactions_hash = self.facade.hash_embedded_transactions(
+            embedded_transactions
+        )
+
+        descriptor = sc.AggregateCompleteTransactionV2Descriptor(  # type: ignore[union-attr]
+            transactions_hash=transactions_hash,
+            transactions=embedded_transactions,
+        )
+
+        tx = self.facade.create_transaction_from_descriptor(  # type: ignore[union-attr]
+            descriptor,
+            sc.PublicKey(str(self.wallet.public_key)),
+            sc.Amount(fee_multiplier),
+            60 * 60 * 2,
+            0,
+        )
+        return tx
+
+    def _sign_and_announce_aggregate(
+        self,
+        aggregate_tx: sc.Transaction,
+        context: str = "",
+    ) -> dict[str, Any]:
+        signature = self.sign_transaction(aggregate_tx)
+        signed_payload = self.attach_signature(aggregate_tx, signature)
+        tx_hash = self.calculate_transaction_hash_from_signed_payload(signed_payload)
+        result = self.announce_transaction(signed_payload)
+        logger.info("Aggregate transaction announced: %s", context)
+        return {
+            "hash": tx_hash,
+            "api_message": result.get("message", ""),
+            "response": result,
+        }
+
+    def create_sign_and_announce_account_metadata(
+        self,
+        target_address: str,
+        key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> dict[str, Any]:
+        embedded_tx = self.create_embedded_account_metadata(
+            signer_public_key=str(self.wallet.public_key),
+            target_address=target_address,
+            scoped_metadata_key=key,
+            value=value,
+            value_size_delta=value_size_delta,
+        )
+
+        aggregate_tx = self.create_aggregate_complete_from_embedded([embedded_tx])
+        aggregate_tx.fee = sc.Amount(aggregate_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+
+        result = self._sign_and_announce_aggregate(
+            aggregate_tx, f"Account metadata for {target_address}"
+        )
+        return result
+
+    def create_sign_and_announce_mosaic_metadata(
+        self,
+        target_address: str,
+        mosaic_id: int,
+        key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> dict[str, Any]:
+        embedded_tx = self.create_embedded_mosaic_metadata(
+            signer_public_key=str(self.wallet.public_key),
+            target_address=target_address,
+            mosaic_id=mosaic_id,
+            scoped_metadata_key=key,
+            value=value,
+            value_size_delta=value_size_delta,
+        )
+
+        aggregate_tx = self.create_aggregate_complete_from_embedded([embedded_tx])
+        aggregate_tx.fee = sc.Amount(aggregate_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+
+        result = self._sign_and_announce_aggregate(
+            aggregate_tx, f"Mosaic metadata for {hex(mosaic_id)}"
+        )
+        return result
+
+    def create_sign_and_announce_namespace_metadata(
+        self,
+        target_address: str,
+        namespace_id: int,
+        key: int,
+        value: bytes,
+        value_size_delta: int,
+    ) -> dict[str, Any]:
+        embedded_tx = self.create_embedded_namespace_metadata(
+            signer_public_key=str(self.wallet.public_key),
+            target_address=target_address,
+            namespace_id=namespace_id,
+            scoped_metadata_key=key,
+            value=value,
+            value_size_delta=value_size_delta,
+        )
+
+        aggregate_tx = self.create_aggregate_complete_from_embedded([embedded_tx])
+        aggregate_tx.fee = sc.Amount(aggregate_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+
+        result = self._sign_and_announce_aggregate(
+            aggregate_tx, f"Namespace metadata for {hex(namespace_id)}"
         )
         return result

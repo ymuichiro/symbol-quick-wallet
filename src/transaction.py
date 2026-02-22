@@ -265,3 +265,59 @@ class TransactionManager:
         result = self._sign_attach_and_announce(mosaic_tx)
         logger.info("Mosaic creation transaction sent: supply=%s", supply)
         return result
+
+    def create_sign_and_announce_root_namespace(
+        self,
+        name: str,
+        duration_blocks: int,
+    ) -> dict[str, Any]:
+        ns_tx = self.wallet.create_root_namespace_transaction(name, duration_blocks)
+        result = self._sign_attach_and_announce(ns_tx)
+        logger.info("Root namespace transaction sent: %s", name)
+        return result
+
+    def create_sign_and_announce_sub_namespace(
+        self,
+        name: str,
+        parent_name: str,
+    ) -> dict[str, Any]:
+        ns_tx = self.wallet.create_sub_namespace_transaction(name, parent_name)
+        result = self._sign_attach_and_announce(ns_tx)
+        logger.info("Sub-namespace transaction sent: %s.%s", parent_name, name)
+        return result
+
+    def create_sign_and_announce_address_alias(
+        self,
+        namespace_name: str,
+        address: str,
+        link_action: str = "link",
+    ) -> dict[str, Any]:
+        alias_tx = self.wallet.create_address_alias_transaction(
+            namespace_name, address, link_action
+        )
+        result = self._sign_attach_and_announce(alias_tx)
+        logger.info(
+            "Address alias transaction sent: %s -> %s, action=%s",
+            namespace_name,
+            address,
+            link_action,
+        )
+        return result
+
+    def create_sign_and_announce_mosaic_alias(
+        self,
+        namespace_name: str,
+        mosaic_id: int,
+        link_action: str = "link",
+    ) -> dict[str, Any]:
+        alias_tx = self.wallet.create_mosaic_alias_transaction(
+            namespace_name, mosaic_id, link_action
+        )
+        result = self._sign_attach_and_announce(alias_tx)
+        logger.info(
+            "Mosaic alias transaction sent: %s -> %s, action=%s",
+            namespace_name,
+            hex(mosaic_id),
+            link_action,
+        )
+        return result

@@ -35,16 +35,17 @@ classifiers = [
     "Topic :: Security :: Cryptography",
     "Topic :: Terminals",
 ]
- dependencies = [
-     "qrcode[pil]>=8.2.0",
-     "requests>=2.28.0",
-     "symbol-sdk-python>=3.3.0",
-     "textual>=0.46.0",
-     "cryptography>=46.0.0",
-     "pyperclip>=1.8.0",
-     "pyzbar>=0.1.9",
-     "opencv-python-headless>=4.8.0",
- ]
+  dependencies = [
+      "qrcode[pil]>=8.2.0",
+      "requests>=2.28.0",
+      "symbol-sdk-python>=3.3.0",
+      "textual>=0.46.0",
+      "cryptography>=46.0.0",
+      "pyperclip>=1.8.0",
+      "pyzbar>=0.1.9",
+      "opencv-python-headless>=4.8.0",
+      "websocket-client>=1.6.0",
+  ]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/symbol-quick-wallet"

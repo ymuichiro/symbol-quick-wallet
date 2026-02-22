@@ -76,9 +76,9 @@ MULTI_ACCOUNT_VERSION = 1
 
 
 class Wallet:
-    XYM_MOSAIC_ID = 0x6BED913FA20223F8
-    TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
-    XYM_DIVISIBILITY = 6
+    XYM_MOSAIC_ID: int = 0x6BED913FA20223F8
+    TESTNET_XYM_MOSAIC_ID: int = 0x72C0212E67A08BCE
+    XYM_DIVISIBILITY: int = 6
 
     @classmethod
     def _resolve_storage_dir(cls, storage_dir: str | Path | None = None) -> Path:
@@ -697,7 +697,7 @@ class Wallet:
             f"(last scanned items: {latest_count})."
         )
 
-    def get_mosaic_info(self, mosaic_id):
+    def get_mosaic_info(self, mosaic_id: str | int) -> dict[str, Any] | None:
         try:
             return self._network_client.get_optional(
                 f"/mosaics/{mosaic_id}",
@@ -874,7 +874,7 @@ class Wallet:
             return known_mosaics[mosaic_id_hex.lower()]
         return mosaic_id_hex
 
-    def test_node_connection(self, node_url=None):
+    def test_node_connection(self, node_url: str | None = None) -> dict[str, Any]:
         """Test if a node is accessible and healthy."""
         url = node_url if node_url else self.node_url
         test_client = NetworkClient(
@@ -924,6 +924,136 @@ class Wallet:
             f"Mosaic definition transaction created: supply={supply}, divisibility={divisibility}"
         )
         return mosaic_tx
+
+    def create_root_namespace_transaction(
+        self,
+        name: str,
+        duration_blocks: int,
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_id(name.lower())
+
+        ns_dict = {
+            "type": "namespace_registration_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "id": namespace_id,
+            "registration_type": "root",
+            "name": name.lower(),
+            "duration": duration_blocks,
+        }
+
+        ns_tx = self.facade.transaction_factory.create(ns_dict)
+        logger.info(
+            f"Root namespace transaction created: {name}, duration={duration_blocks}"
+        )
+        return ns_tx
+
+    def create_sub_namespace_transaction(
+        self,
+        name: str,
+        parent_name: str,
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        parent_parts = parent_name.lower().split(".")
+        parent_id = 0
+        for part in parent_parts:
+            parent_id = self._generate_namespace_id(part, parent_id)
+
+        full_name = f"{parent_name}.{name}".lower()
+        namespace_id = self._generate_namespace_id(name.lower(), parent_id)
+
+        ns_dict = {
+            "type": "namespace_registration_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "id": namespace_id,
+            "registration_type": "child",
+            "name": name.lower(),
+            "parent_id": parent_id,
+        }
+
+        ns_tx = self.facade.transaction_factory.create(ns_dict)
+        logger.info(f"Sub-namespace transaction created: {full_name}")
+        return ns_tx
+
+    def create_address_alias_transaction(
+        self,
+        namespace_name: str,
+        address: str,
+        link_action: str = "link",
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_path(namespace_name.lower())[-1]
+
+        alias_dict = {
+            "type": "address_alias_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "namespace_id": namespace_id,
+            "address": address.replace("-", "").upper(),
+            "alias_action": link_action,
+        }
+
+        alias_tx = self.facade.transaction_factory.create(alias_dict)
+        logger.info(
+            f"Address alias transaction created: {namespace_name} -> {address}, action={link_action}"
+        )
+        return alias_tx
+
+    def create_mosaic_alias_transaction(
+        self,
+        namespace_name: str,
+        mosaic_id: int,
+        link_action: str = "link",
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_path(namespace_name.lower())[-1]
+
+        alias_dict = {
+            "type": "mosaic_alias_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "namespace_id": namespace_id,
+            "mosaic_id": mosaic_id,
+            "alias_action": link_action,
+        }
+
+        alias_tx = self.facade.transaction_factory.create(alias_dict)
+        logger.info(
+            f"Mosaic alias transaction created: {namespace_name} -> {hex(mosaic_id)}, action={link_action}"
+        )
+        return alias_tx
+
+    def _generate_namespace_id(self, name: str, parent_id: int = 0) -> int:
+        name_bytes = name.encode("utf-8")
+        namespace_id = parent_id
+        for i, char_byte in enumerate(name_bytes):
+            namespace_id = (namespace_id * 31 + char_byte) & 0xFFFFFFFFFFFFFFFF
+            if i == 0:
+                namespace_id = namespace_id | 0x8000000000000000
+        return namespace_id
+
+    def _generate_namespace_path(self, full_name: str) -> list[int]:
+        parts = full_name.lower().split(".")
+        path = [0]
+        for part in parts:
+            parent_id = path[-1]
+            namespace_id = self._generate_namespace_id(part, parent_id)
+            path.append(namespace_id)
+        return path[1:]
 
     def get_harvesting_status(self):
         """Get harvesting status of account."""

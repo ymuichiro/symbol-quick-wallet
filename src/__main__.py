@@ -61,6 +61,7 @@ from src.features.transfer.handlers import TransferHandlersMixin
 from src.features.address_book.handlers import AddressBookHandlersMixin
 from src.features.account.handlers import AccountHandlersMixin
 from src.features.mosaic.handlers import MosaicHandlersMixin
+from src.features.namespace.handlers import NamespaceHandlersMixin
 from src.shared.transaction_template import TemplateStorage
 from src.shared.transaction_queue import TransactionQueue
 from src.shared.connection_state import (
@@ -68,6 +69,14 @@ from src.shared.connection_state import (
     ConnectionMonitorConfig,
     ConnectionState,
     get_connection_state_message,
+)
+from src.features.monitoring import (
+    TransactionMonitor,
+    MonitoringConfig,
+    TransactionNotification,
+    BlockNotification,
+    CosignatureNotification,
+    TransactionStatusNotification,
 )
 from src.shared.network import NetworkError, NetworkErrorType
 from src.shared.protocols import WalletProtocol
@@ -82,6 +91,7 @@ class WalletApp(
     AddressBookHandlersMixin,
     AccountHandlersMixin,
     MosaicHandlersMixin,
+    NamespaceHandlersMixin,
     App,
 ):
     CSS = CSS
@@ -109,6 +119,7 @@ class WalletApp(
     _tx_queue: TransactionQueue | None = None
     _template_storage: TemplateStorage | None = None
     _status_screen: TransactionStatusScreen | None = None
+    _transaction_monitor: TransactionMonitor | None = None
     wallet: WalletProtocol
 
     def _format_network_error(self, error: Exception) -> str:
@@ -249,6 +260,7 @@ class WalletApp(
 
     def on_unmount(self) -> None:
         self._stop_connection_monitoring()
+        self._stop_transaction_monitoring()
 
     def unlock_wallet(self, password: str, screen) -> bool:
         """Unlock wallet directly from password screen.
@@ -345,6 +357,7 @@ class WalletApp(
         self.notify(f"{label} unlocked successfully!", severity="information")
 
         self._start_connection_monitoring()
+        self._start_transaction_monitoring()
 
     def _start_connection_monitoring(self) -> None:
         if self._connection_monitor:
@@ -439,6 +452,150 @@ class WalletApp(
             self._connection_monitor.stop()
             self._connection_monitor = None
             logger.info("Connection monitoring stopped")
+
+    def _start_transaction_monitoring(self) -> None:
+        if self._transaction_monitor:
+            return
+
+        def on_connected() -> None:
+            logger.info("Transaction monitor connected")
+            try:
+                self.call_from_thread(
+                    self.notify,
+                    "Real-time monitoring active",
+                    severity="information",
+                    timeout=3,
+                )
+            except Exception:
+                pass
+
+        def on_disconnected() -> None:
+            logger.info("Transaction monitor disconnected")
+
+        def on_error(error: Exception) -> None:
+            logger.error("Transaction monitor error: %s", error)
+
+        def on_confirmed(tx_notification: TransactionNotification) -> None:
+            logger.info(
+                "Confirmed transaction received: %s",
+                tx_notification.meta.get("hash", "unknown"),
+            )
+            self._handle_incoming_transaction(tx_notification, "confirmed")
+
+        def on_unconfirmed(tx_notification: TransactionNotification) -> None:
+            logger.info("Unconfirmed transaction received")
+            self._handle_incoming_transaction(tx_notification, "unconfirmed")
+
+        def on_partial(tx_notification: TransactionNotification) -> None:
+            logger.info("Partial/cosignature request received")
+            self._handle_partial_transaction(tx_notification)
+
+        def on_block(block_notification: BlockNotification) -> None:
+            height = block_notification.block.get("height", "unknown")
+            logger.debug("New block: %s", height)
+
+        def on_finalized(block_notification: BlockNotification) -> None:
+            height = block_notification.block.get(
+                "height", block_notification.block.get("finalizationHeight", "unknown")
+            )
+            logger.info("Block finalized: %s", height)
+
+        def on_cosignature(cosi_notification: CosignatureNotification) -> None:
+            logger.info(
+                "Cosignature received for: %s", cosi_notification.parent_hash[:16]
+            )
+
+        def on_status(status_notification: TransactionStatusNotification) -> None:
+            logger.info(
+                "Transaction status: %s - %s",
+                status_notification.hash[:16],
+                status_notification.code,
+            )
+
+        config = MonitoringConfig(
+            reconnect_delay=5.0,
+            max_reconnect_delay=60.0,
+            ping_interval=30.0,
+            auto_reconnect=True,
+        )
+        self._transaction_monitor = TransactionMonitor(
+            node_url=self.wallet.node_url,
+            config=config,
+            on_connected=on_connected,
+            on_disconnected=on_disconnected,
+            on_error=on_error,
+            on_confirmed_transaction=on_confirmed,
+            on_unconfirmed_transaction=on_unconfirmed,
+            on_partial_transaction=on_partial,
+            on_block=on_block,
+            on_finalized_block=on_finalized,
+            on_cosignature=on_cosignature,
+            on_transaction_status=on_status,
+        )
+        self._transaction_monitor.start()
+        logger.info("Transaction monitoring started for node: %s", self.wallet.node_url)
+
+        if self.wallet.address:
+            self._transaction_monitor.subscribe_address(str(self.wallet.address))
+
+    def _handle_incoming_transaction(
+        self, tx_notification: TransactionNotification, status: str
+    ) -> None:
+        tx = tx_notification.transaction
+        meta = tx_notification.meta
+        tx_hash = meta.get("hash", "unknown")[:16]
+        recipient = tx.get("recipientAddress", "")
+
+        wallet_address = (
+            str(self.wallet.address).replace("-", "").upper()
+            if self.wallet.address
+            else ""
+        )
+        is_incoming = recipient.replace("-", "").upper() == wallet_address
+
+        if is_incoming:
+            mosaics = tx.get("mosaics", [])
+            amount_str = ""
+            if mosaics:
+                amount = int(mosaics[0].get("amount", 0))
+                amount_str = f"{amount / 1_000_000:.6f} XYM"
+
+            try:
+                msg = (
+                    f"Incoming transaction {status}: {amount_str}"
+                    if amount_str
+                    else f"Incoming transaction {status}"
+                )
+                self.call_from_thread(
+                    self.notify,
+                    msg,
+                    severity="information" if status == "confirmed" else "information",
+                    timeout=8,
+                )
+                if status == "confirmed":
+                    self.call_from_thread(self.update_dashboard)
+            except Exception as e:
+                logger.error("Error handling incoming transaction notification: %s", e)
+
+    def _handle_partial_transaction(
+        self, tx_notification: TransactionNotification
+    ) -> None:
+        tx_hash = tx_notification.meta.get("hash", "unknown")[:16]
+        try:
+            self.call_from_thread(
+                self.notify,
+                f"Cosignature request received ({tx_hash}...)",
+                severity="warning",
+                timeout=10,
+            )
+        except Exception as e:
+            logger.error("Error handling partial transaction notification: %s", e)
+
+    def _stop_transaction_monitoring(self) -> None:
+        if self._transaction_monitor:
+            self._transaction_monitor.stop()
+            self._transaction_monitor = None
+            logger.info("Transaction monitoring stopped")
 
     def on_password_dialog_submitted(self, event):
         """Handle password dialog submission."""
@@ -832,6 +989,7 @@ class WalletApp(
                 ("📜 History", "history"),
                 ("👤 Account Manager", "accounts"),
                 ("📋 Transaction Templates", "templates"),
+                ("📛 Namespaces", "namespaces"),
                 ("⚙️ Show Config", "show_config"),
                 ("🌐 Network Testnet", "network_testnet"),
                 ("🌐 Network Mainnet", "network_mainnet"),
@@ -948,6 +1106,8 @@ class WalletApp(
             self.show_account_manager()
         elif normalized == "templates":
             self.view_templates()
+        elif normalized == "namespaces":
+            self.show_namespace_menu()
         else:
             self.notify(f"Unknown command: /{normalized}", severity="warning")
 
@@ -1533,6 +1693,8 @@ class WalletApp(
             self.wallet.node_url = "http://sym-main-01.opening-line.jp:3000"
         if self._connection_monitor:
             self._connection_monitor.update_node_url(self.wallet.node_url)
+        if self._transaction_monitor:
+            self._transaction_monitor.update_node_url(self.wallet.node_url)
         self.notify("Node URL reset to default", severity="information")
 
     def test_node_connection(self):

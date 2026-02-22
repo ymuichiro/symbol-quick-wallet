@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 import requests
 from requests.exceptions import ConnectionError, HTTPError, Timeout
@@ -89,8 +89,9 @@ def create_network_error(
             "Check your network connection."
         )
     elif error_type == NetworkErrorType.HTTP_ERROR:
-        status_code = getattr(error.response, "status_code", None)
-        response_text = getattr(error.response, "text", None)
+        http_error = cast(HTTPError, error)
+        status_code = getattr(http_error.response, "status_code", None)
+        response_text = getattr(http_error.response, "text", None)
         message = f"{context_prefix}HTTP error {status_code}: {response_text or 'Unknown error'}"
         return NetworkError(
             error_type=error_type,
@@ -115,7 +116,7 @@ def should_retry(error: Exception, retry_config: RetryConfig) -> bool:
     if isinstance(error, ConnectionError):
         return True
     if isinstance(error, HTTPError):
-        status_code = getattr(error.response, "status_code", None)
+        status_code = getattr(error.response, "status_code", None)  # type: ignore[union-attr]
         if status_code and status_code in retry_config.retryable_status_codes:
             return True
     return False

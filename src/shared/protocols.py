@@ -16,6 +16,8 @@ class WalletProtocol(Protocol):
     """Comprehensive protocol defining the full wallet interface."""
 
     address: str | None
+    public_key: Any
+    private_key: Any
     network_name: str
     node_url: str
     wallet_dir: Path

@@ -16,6 +16,7 @@ Allow users to manage multiple accounts/wallets within the same application.
 - [ ] Delete account (when multiple exist) and verify removal
 - [ ] Verify address book sharing setting works per account
 ---
+---
 
 ---
 
@@ -36,6 +37,7 @@ Allow users to prepare multiple transactions and batch submit them.
 - [ ] Verify estimated fee calculation for queued transactions
 - [ ] Reorder transactions and verify new order persists
 ---
+---
 
 ---
 
@@ -54,6 +56,7 @@ Allow users to scan QR codes to import addresses for transfers.
 - [ ] Parse JSON QR with address and mosaics
 - [ ] Parse Symbol official QR payload format (v/data base64)
 - [ ] Verify invalid QR returns appropriate error
+---
 ---
 
 ---
@@ -76,6 +79,7 @@ Display mosaic metadata and properties when viewing balances.
 - [ ] Verify owner address matches expected
 - [ ] Format mosaic amount correctly based on divisibility
 ---
+---
 
 ---
 
@@ -96,6 +100,7 @@ Organize address book contacts into groups for easier management.
 - [ ] Delete group and verify contacts are unassigned (not deleted)
 - [ ] Filter addresses by group and verify correct results
 ---
+---
 
 ---
 
@@ -114,6 +119,7 @@ Save frequently used transfer configurations as templates.
 - [ ] Update template and verify changes saved
 - [ ] Delete template and verify removal
 - [ ] Load template and verify all fields populated correctly
+---
 ---
 
 ---
@@ -150,6 +156,7 @@ tests/
   shared/               # Shared utility tests (validation, network, clipboard, etc.)
 ```
 ---
+---
 
 ---
 
@@ -173,6 +180,7 @@ Allow users to register and manage namespaces for their accounts and mosaics.
 - [x] Resolve namespace to mosaic ID via node API
 - [x] Verify namespace expiration calculation
 - [x] Register root namespace on testnet and verify confirmation
+---
 ---
 
 ---
@@ -206,12 +214,13 @@ Support aggregate bonded and complete transactions for multi-party workflows.
 - [ ] Cosign a partial transaction and verify announcement
 - [ ] Poll transaction status until confirmed/failed
 ---
+---
 
 ---
 
 ## Add multisig account support
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: medium
 
 Allow users to configure and use multisignature accounts.
@@ -222,11 +231,15 @@ Allow users to configure and use multisignature accounts.
 - Initiate and sign multisig transactions
 **Implementation:**
 - Reference `docs/quick_learning_symbol_v3/09_multisig.md`
+- Implemented in `src/features/multisig/`
+- UI accessible via `/multisig` command
+**Tests:** `tests/features/multisig/test_service.py`
 ### Self-Check (Production Logic)
-- [ ] Convert account to 1-of-2 multisig on testnet
-- [ ] Initiate transaction from multisig account
-- [ ] Cosign multisig transaction from cosigner
-- [ ] Verify multisig account info reflects correct thresholds
+- [x] Convert account to 1-of-2 multisig on testnet
+- [x] Initiate transaction from multisig account
+- [x] Cosign multisig transaction from cosigner
+- [x] Verify multisig account info reflects correct thresholds
+---
 ---
 
 ---
@@ -252,6 +265,7 @@ Implement WebSocket-based real-time monitoring for incoming transactions.
 - [x] Subscribe to block finalization
 - [ ] Receive real-time notification for incoming transfer (requires live test)
 ---
+---
 
 ---
 
@@ -275,6 +289,7 @@ Allow users to attach metadata to accounts, mosaics, and namespaces.
 - [x] Create aggregate complete transaction with embedded metadata
 - [x] Calculate value delta for updates (XOR encoding)
 - [x] Fetch existing metadata from node API
+---
 ---
 
 ---

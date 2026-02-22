@@ -1,6 +1,5 @@
 """Main application entry point for Symbol Quick Wallet."""
 
-import json
 import logging
 import threading
 import traceback
@@ -44,22 +43,13 @@ from textual.widgets import (
 )
 
 from src.screens import (
-    AccountManagerScreen,
-    AddAccountScreen,
     CommandSelectorScreen,
-    CreateMosaicScreen,
-    DeleteAccountConfirmScreen,
-    EditAccountScreen,
-    ExportKeyScreen,
     FirstRunImportWalletScreen,
     FirstRunSetupScreen,
     HarvestingLinkScreen,
     HarvestingUnlinkScreen,
-    ImportAccountKeyScreen,
-    ImportEncryptedKeyScreen,
     ImportWalletScreen,
     LoadingScreen,
-    MosaicMetadataScreen,
     NetworkSelectorScreen,
     PasswordScreen,
     QRCodeScreen,
@@ -70,6 +60,7 @@ from src.screens import (
 from src.features.transfer.handlers import TransferHandlersMixin
 from src.features.address_book.handlers import AddressBookHandlersMixin
 from src.features.account.handlers import AccountHandlersMixin
+from src.features.mosaic.handlers import MosaicHandlersMixin
 from src.shared.transaction_template import TemplateStorage
 from src.shared.transaction_queue import TransactionQueue
 from src.shared.connection_state import (
@@ -79,6 +70,7 @@ from src.shared.connection_state import (
     get_connection_state_message,
 )
 from src.shared.network import NetworkError, NetworkErrorType
+from src.shared.protocols import WalletProtocol
 from src.shared.styles import CSS
 from src.transaction import TransactionManager
 from src.wallet import Wallet
@@ -89,6 +81,7 @@ class WalletApp(
     TransferHandlersMixin,
     AddressBookHandlersMixin,
     AccountHandlersMixin,
+    MosaicHandlersMixin,
     App,
 ):
     CSS = CSS
@@ -116,6 +109,7 @@ class WalletApp(
     _tx_queue: TransactionQueue | None = None
     _template_storage: TemplateStorage | None = None
     _status_screen: TransactionStatusScreen | None = None
+    wallet: WalletProtocol
 
     def _format_network_error(self, error: Exception) -> str:
         """Format a network error with meaningful user-friendly message."""
@@ -1251,7 +1245,8 @@ class WalletApp(
                     logger.info(
                         f"[update_dashboard] Adding row: {mosaic_name} = {amount_units}"
                     )
-                    balance_table.add_row(mosaic_name, amount_units, hex(mosaic_id))
+                    mosaic_id_hex = hex(mosaic_id) if mosaic_id is not None else "N/A"
+                    balance_table.add_row(mosaic_name, amount_units, mosaic_id_hex)
 
                 logger.info(
                     "[update_dashboard] Step 3: balance-table updated successfully"
@@ -1296,70 +1291,6 @@ class WalletApp(
 
         logger.info(
             "[update_dashboard] ========== UPDATE DASHBOARD COMPLETED =========="
-        )
-        logger.info("")
-
-    def update_address_book(self):
-        logger.info("")
-        logger.info(
-            "[update_address_book] ========== UPDATE ADDRESS BOOK STARTED =========="
-        )
-        logger.info(f"[update_address_book] is_authenticated: {self.is_authenticated}")
-
-        logger.info("[update_address_book] Step 1: Querying address-book-table widget")
-        try:
-            table = cast(DataTable, self.query_one("#address-book-table"))
-            logger.info("[update_address_book] Step 1: address-book-table widget found")
-        except Exception as e:
-            logger.error(
-                f"[update_address_book] Step 1: ERROR finding address-book-table: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info("[update_address_book] Step 2: Clearing table columns")
-        try:
-            table.clear(columns=True)
-            logger.info("[update_address_book] Step 2: Table columns cleared")
-        except Exception as e:
-            logger.error(
-                f"[update_address_book] Step 2: ERROR clearing columns: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info("[update_address_book] Step 3: Adding table columns")
-        try:
-            table.add_column("Name", key="name")
-            table.add_column("Address", key="address")
-            table.add_column("Note", key="note")
-            logger.info("[update_address_book] Step 3: Table columns added")
-        except Exception as e:
-            logger.error(
-                f"[update_address_book] Step 3: ERROR adding columns: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info("[update_address_book] Step 4: Getting addresses from wallet")
-        try:
-            addresses = self.wallet.get_addresses()
-            logger.info(f"[update_address_book] Step 4: Got {len(addresses)} addresses")
-        except Exception as e:
-            logger.error(
-                f"[update_address_book] Step 4: ERROR getting addresses: {e}",
-                exc_info=True,
-            )
-            table.add_row(f"Error: {str(e)}", "", "")
-            return
-
-        logger.info("[update_address_book] Step 5: Adding address rows to table")
-        for addr, info in addresses.items():
-            logger.info(f"[update_address_book] Adding row: {info['name']} - {addr}")
-            table.add_row(info["name"], addr, info["note"])
-
-        logger.info(
-            "[update_address_book] ========== UPDATE ADDRESS BOOK COMPLETED =========="
         )
         logger.info("")
 
@@ -1415,76 +1346,6 @@ class WalletApp(
             self.wallet.network_name,
             self.wallet.node_url,
         )
-
-    def update_mosaics_table(self):
-        logger.info("")
-        logger.info(
-            "[update_mosaics_table] ========== UPDATE MOSAICS TABLE STARTED =========="
-        )
-        logger.info(f"[update_mosaics_table] is_authenticated: {self.is_authenticated}")
-        logger.info(f"[update_mosaics_table] Number of mosaics: {len(self.mosaics)}")
-
-        logger.info("[update_mosaics_table] Step 1: Querying mosaics-table widget")
-        try:
-            table = cast(DataTable, self.query_one("#mosaics-table"))
-            logger.info("[update_mosaics_table] Step 1: mosaics-table widget found")
-        except Exception as e:
-            logger.error(
-                f"[update_mosaics_table] Step 1: ERROR finding mosaics-table: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info("[update_mosaics_table] Step 2: Clearing table columns")
-        try:
-            table.clear(columns=True)
-            logger.info("[update_mosaics_table] Step 2: Table columns cleared")
-        except Exception as e:
-            logger.error(
-                f"[update_mosaics_table] Step 2: ERROR clearing columns: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info("[update_mosaics_table] Step 3: Adding table columns")
-        try:
-            table.add_column("Mosaic", key="mosaic")
-            table.add_column("Amount", key="amount")
-            table.add_column("Mosaic ID", key="mosaic_id")
-            logger.info("[update_mosaics_table] Step 3: Table columns added")
-        except Exception as e:
-            logger.error(
-                f"[update_mosaics_table] Step 3: ERROR adding columns: {e}",
-                exc_info=True,
-            )
-            return
-
-        logger.info(
-            f"[update_mosaics_table] Step 4: Adding {len(self.mosaics)} mosaic rows"
-        )
-        for idx, mosaic in enumerate(self.mosaics):
-            try:
-                amount_units = f"{mosaic['amount'] / 1_000_000:,.6f} units"
-                mosaic_name = self.wallet.get_mosaic_name(mosaic["mosaic_id"])
-                logger.info(
-                    f"[update_mosaics_table] Adding row {idx + 1}: {mosaic_name} = {amount_units}"
-                )
-                table.add_row(
-                    mosaic_name,
-                    amount_units,
-                    hex(mosaic["mosaic_id"]),
-                    key=str(mosaic["mosaic_id"]),
-                )
-            except Exception as e:
-                logger.error(
-                    f"[update_mosaics_table] ERROR adding row {idx + 1}: {e}",
-                    exc_info=True,
-                )
-
-        logger.info(
-            "[update_mosaics_table] ========== UPDATE MOSAICS TABLE COMPLETED =========="
-        )
-        logger.info("")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id
@@ -1727,138 +1588,11 @@ class WalletApp(
     def show_import_wallet_dialog(self):
         self.push_screen(ImportWalletScreen())
 
-    def show_export_key_dialog(self):
-        self.push_screen(ExportKeyScreen())
-
-    def show_import_encrypted_key_dialog(self):
-        self.push_screen(ImportEncryptedKeyScreen())
-
-    def show_create_mosaic_dialog(self):
-        self.push_screen(CreateMosaicScreen())
-
     def show_link_harvesting_dialog(self):
         self.push_screen(HarvestingLinkScreen())
 
     def show_unlink_harvesting_dialog(self):
         self.push_screen(HarvestingUnlinkScreen())
-
-    def show_account_manager(self):
-        accounts = self.wallet.get_accounts()
-        current_index = self.wallet.get_current_account_index()
-        self.push_screen(AccountManagerScreen(accounts, current_index))
-
-    def on_account_manager_screen_account_selected(self, event):
-        if self.wallet.switch_account(event.index):
-            self.wallet.load_current_account()
-            self.update_dashboard()
-            self.update_address_book()
-            current_account = self.wallet.get_current_account()
-            label = current_account.label if current_account else "Unknown"
-            self.notify(f"Switched to: {label}", severity="information")
-
-    def on_account_manager_screen_add_account_requested(self, event):
-        self.push_screen(AddAccountScreen())
-
-    def on_account_manager_screen_edit_account_requested(self, event):
-        self.push_screen(
-            EditAccountScreen(event.index, event.label, event.address_book_shared)
-        )
-
-    def on_account_manager_screen_delete_account_requested(self, event):
-        accounts = self.wallet.get_accounts()
-        if event.index < len(accounts):
-            acc = accounts[event.index]
-            self.push_screen(
-                DeleteAccountConfirmScreen(event.index, acc.label, acc.address)
-            )
-
-    def on_add_account_screen_create_account_requested(self, event):
-        try:
-            self.wallet.create_account(event.label, event.address_book_shared)
-            self.notify("New account created successfully!", severity="information")
-        except Exception as e:
-            self.notify(f"Error creating account: {str(e)}", severity="error")
-
-    def on_add_account_screen_import_account_requested(self, event):
-        self.push_screen(ImportAccountKeyScreen(event.label, event.address_book_shared))
-
-    def on_import_account_key_screen_import_key_submitted(self, event):
-        try:
-            self.wallet.import_account(
-                event.private_key, event.label, event.address_book_shared
-            )
-            self.notify("Account imported successfully!", severity="information")
-        except Exception as e:
-            self.notify(f"Error importing account: {str(e)}", severity="error")
-
-    def on_edit_account_screen_edit_account_submitted(self, event):
-        self.wallet.update_account_label(event.index, event.label)
-        self.wallet.update_account_address_book_shared(
-            event.index, event.address_book_shared
-        )
-        if event.index == self.wallet.get_current_account_index():
-            self.wallet.load_current_account()
-            self.update_address_book()
-        self.notify("Account updated successfully!", severity="information")
-
-    def on_delete_account_confirm_screen_delete_confirmed(self, event):
-        if self.wallet.delete_account(event.index):
-            self.wallet.load_current_account()
-            self.update_dashboard()
-            self.update_address_book()
-            self.notify("Account deleted successfully!", severity="information")
-        else:
-            self.notify("Cannot delete the last account", severity="warning")
-
-    def on_export_key_dialog_submitted(self, event):
-        try:
-            export_data = self.wallet.export_private_key(event.password)
-            export_file = self.wallet.wallet_dir / "encrypted_private_key.json"
-            with open(export_file, "w") as f:
-                json.dump(export_data, f, indent=2)
-            self.notify(
-                f"Encrypted key exported to {export_file}", severity="information"
-            )
-        except Exception as e:
-            self.notify(f"Error: {str(e)}", severity="error")
-
-    def on_import_encrypted_key_dialog_submitted(self, event):
-        try:
-            with open(event.file_path, "r") as f:
-                encrypted_data = json.load(f)
-            self.wallet.import_encrypted_private_key(encrypted_data, event.password)
-            self.update_dashboard()
-            self.notify("Encrypted key imported successfully!", severity="information")
-        except Exception as e:
-            self.notify(f"Error: {str(e)}", severity="error")
-
-    def on_create_mosaic_dialog_submitted(self, event):
-        try:
-            tm = TransactionManager(self.wallet, self.wallet.node_url)
-            result = tm.create_sign_and_announce_mosaic(
-                event.supply,
-                event.divisibility,
-                event.transferable,
-                event.supply_mutable,
-                event.revokable,
-            )
-            self.push_screen(
-                TransactionResultScreen(result["hash"], self.wallet.network_name)
-            )
-            self.notify(
-                "Mosaic created successfully!",
-                severity="information",
-            )
-            self.update_dashboard()
-        except Exception as e:
-            error_msg = str(e)
-            if "timeout" in error_msg.lower():
-                error_msg = f"Connection timeout. Node at {self.wallet.node_url} may be unavailable."
-            elif "cannot connect" in error_msg.lower():
-                error_msg = f"Cannot connect to node. Check your network and node URL: {self.wallet.node_url}"
-            elif "http error" in error_msg.lower():
-                error_msg = f"Node returned error: {error_msg}"
-            self.notify(f"Error creating mosaic: {error_msg}", severity="error")
 
     def on_transaction_confirm_dialog_submitted(self, event):
         self._submit_transaction_async(event.recipient, event.mosaics, event.message)
@@ -1982,65 +1716,6 @@ class WalletApp(
         """Show QR code of wallet address."""
         if self.wallet.address:
             self.push_screen(QRCodeScreen(self.wallet.get_address()))
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle data table row selection."""
-        if event.data_table.id == "balance-table":
-            self._show_mosaic_metadata_from_table(event)
-
-    def _show_mosaic_metadata_from_table(self, event) -> None:
-        """Show mosaic metadata when a row is selected in balance table."""
-        try:
-            balance_table = cast(DataTable, self.query_one("#balance-table"))
-            cursor_row = balance_table.cursor_row
-            if cursor_row is None:
-                return
-
-            mosaics = self.wallet.get_balance()
-            if cursor_row >= len(mosaics):
-                return
-
-            selected_mosaic = mosaics[cursor_row]
-            mosaic_id = selected_mosaic.get("id")
-            if mosaic_id is None:
-                return
-
-            self._show_mosaic_metadata(mosaic_id)
-        except Exception as e:
-            logger.error(f"Error showing mosaic metadata: {e}")
-            self.notify(f"Failed to load mosaic info: {e}", severity="error")
-
-    def _show_mosaic_metadata(self, mosaic_id: int) -> None:
-        """Fetch and display mosaic metadata."""
-        loading_screen = LoadingScreen("Loading mosaic info...")
-        self.push_screen(loading_screen)
-
-        def worker() -> None:
-            try:
-                mosaic_info = self.wallet.get_mosaic_full_info(mosaic_id)
-                self.call_from_thread(
-                    self._on_mosaic_metadata_loaded, mosaic_info, None
-                )
-            except Exception as e:
-                self.call_from_thread(self._on_mosaic_metadata_loaded, None, str(e))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _on_mosaic_metadata_loaded(
-        self, mosaic_info: dict | None, error: str | None
-    ) -> None:
-        """Handle mosaic metadata load completion."""
-        try:
-            self.pop_screen()
-        except Exception:
-            pass
-
-        if error:
-            self.notify(f"Failed to load mosaic info: {error}", severity="error")
-            return
-
-        if mosaic_info:
-            self.push_screen(MosaicMetadataScreen(mosaic_info))
 
     def on_network_selector_screen_network_selected(self, event):
         """Handle network selection."""

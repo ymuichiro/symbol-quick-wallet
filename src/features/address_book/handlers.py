@@ -29,6 +29,7 @@ class AddressBookHandlersMixin:
     """Mixin class providing address book-related event handlers for WalletApp."""
 
     wallet: WalletProtocol
+    is_authenticated: bool
 
     def show_address_book_selector(self: "WalletApp") -> None:
         addresses = self.wallet.get_addresses()
@@ -154,3 +155,67 @@ class AddressBookHandlersMixin:
     ) -> None:
         self.wallet.delete_contact_group(event.group_id)
         self.notify("Group deleted successfully", severity="information")
+
+    def update_address_book(self: "WalletApp") -> None:
+        logger.info("")
+        logger.info(
+            "[update_address_book] ========== UPDATE ADDRESS BOOK STARTED =========="
+        )
+        logger.info(f"[update_address_book] is_authenticated: {self.is_authenticated}")
+
+        logger.info("[update_address_book] Step 1: Querying address-book-table widget")
+        try:
+            table = cast(DataTable, self.query_one("#address-book-table"))
+            logger.info("[update_address_book] Step 1: address-book-table widget found")
+        except Exception as e:
+            logger.error(
+                f"[update_address_book] Step 1: ERROR finding address-book-table: {e}",
+                exc_info=True,
+            )
+            return
+
+        logger.info("[update_address_book] Step 2: Clearing table columns")
+        try:
+            table.clear(columns=True)
+            logger.info("[update_address_book] Step 2: Table columns cleared")
+        except Exception as e:
+            logger.error(
+                f"[update_address_book] Step 2: ERROR clearing columns: {e}",
+                exc_info=True,
+            )
+            return
+
+        logger.info("[update_address_book] Step 3: Adding table columns")
+        try:
+            table.add_column("Name", key="name")
+            table.add_column("Address", key="address")
+            table.add_column("Note", key="note")
+            logger.info("[update_address_book] Step 3: Table columns added")
+        except Exception as e:
+            logger.error(
+                f"[update_address_book] Step 3: ERROR adding columns: {e}",
+                exc_info=True,
+            )
+            return
+
+        logger.info("[update_address_book] Step 4: Getting addresses from wallet")
+        try:
+            addresses = self.wallet.get_addresses()
+            logger.info(f"[update_address_book] Step 4: Got {len(addresses)} addresses")
+        except Exception as e:
+            logger.error(
+                f"[update_address_book] Step 4: ERROR getting addresses: {e}",
+                exc_info=True,
+            )
+            table.add_row(f"Error: {str(e)}", "", "")
+            return
+
+        logger.info("[update_address_book] Step 5: Adding address rows to table")
+        for addr, info in addresses.items():
+            logger.info(f"[update_address_book] Adding row: {info['name']} - {addr}")
+            table.add_row(info["name"], addr, info["note"])
+
+        logger.info(
+            "[update_address_book] ========== UPDATE ADDRESS BOOK COMPLETED =========="
+        )
+        logger.info("")

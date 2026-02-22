@@ -9,12 +9,12 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 - Show loading indicators during network operations
 - Display meaningful error messages
 - Implement retry logic with exponential backoff
-
 ### Self-Check (Production Logic)
 - [ ] Verify timeout occurs after configured duration
 - [ ] Verify retry logic with exponential backoff
 - [ ] Verify NetworkError contains meaningful message
 - [ ] Test with unreachable node URL
+---
 
 ---
 
@@ -29,12 +29,12 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - Check against mosaic divisibility
 - Show inline validation errors
 - Prevent submission of invalid data
-
 ### Self-Check (Production Logic)
 - [ ] Verify negative amounts are rejected
 - [ ] Verify amounts with too many decimals are rejected
 - [ ] Verify amount exceeds balance is rejected
 - [ ] Verify valid amounts are normalized correctly
+---
 
 ---
 
@@ -49,11 +49,11 @@ Current test coverage is minimal. Need comprehensive tests for:
 - Address validation
 - Mosaic amount conversion
 - Error scenarios
-
 ### Self-Check (Production Logic)
 - [ ] Run `uv run pytest -q` and verify all tests pass
 - [ ] Run `uv run pytest -m unit -v` for unit tests
 - [ ] Run `uv run pytest -m integration -v` for integration tests
+---
 
 ---
 
@@ -66,11 +66,11 @@ The app doesn't detect or handle network state changes. Users should be notified
 - Network is unavailable
 - Node connection is lost
 - Connection is restored
-
 ### Self-Check (Production Logic)
 - [ ] Start app with network unavailable and verify error displayed
 - [ ] Restore network and verify connection state updates
 - [ ] Verify periodic connection status checks
+---
 
 ---
 
@@ -80,11 +80,11 @@ The app doesn't detect or handle network state changes. Users should be notified
 - **Priority**: medium
 
 After submitting a transaction, the app should poll for confirmation status and update the UI accordingly instead of just showing a loading indicator.
-
 ### Self-Check (Production Logic)
 - [ ] Submit transfer on testnet and verify polling starts
 - [ ] Verify UI updates when transaction confirmed
 - [ ] Verify error handling for failed transaction
+---
 
 ---
 
@@ -106,11 +106,11 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Create corresponding test directories under `tests/features/`
 - [x] Update all imports and exports
 - [x] Run full test suite to verify no regressions
-
 ### Self-Check (Production Logic)
 - [ ] Verify `uv run ty check src/` passes
 - [ ] Verify `uv run ruff check src/` passes
 - [ ] Verify `uv run pytest -q` passes
+---
 
 ---
 
@@ -131,17 +131,17 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Create `src/features/mosaic/screens.py` for mosaic screens
 - [x] Create `src/features/account/screens.py` for account management screens
 - [x] Keep shared/common screens in `src/screens.py` (base classes, loading, etc.)
-
 ### Self-Check (Production Logic)
 - [x] Verify no import errors after split
 - [x] Verify all screens load correctly
 - [x] Verify `uv run ty check src/` passes after split
+---
 
 ---
 
 ## Refactor oversized __main__.py
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: high
 
 `src/__main__.py` is 2943 lines with all application logic in one file.
@@ -151,15 +151,16 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - Difficult to test individual features
 - Violates single responsibility principle
 **Required changes:**
-- [ ] Extract transfer-related handlers to `src/features/transfer/handlers.py`
-- [ ] Extract address book handlers to `src/features/address_book/handlers.py`
-- [ ] Extract account management logic to `src/features/account/service.py`
-- [ ] Keep only app initialization and routing in `__main__.py`
-
+- [x] Extract transfer-related handlers to `src/features/transfer/handlers.py`
+- [x] Extract address book handlers to `src/features/address_book/handlers.py`
+- [x] Extract account management logic to `src/features/account/service.py`
+- [x] Create mosaic handlers in `src/features/mosaic/handlers.py`
+- [x] Keep only app initialization and routing in `__main__.py`
 ### Self-Check (Production Logic)
-- [ ] Verify app starts correctly after refactor
-- [ ] Verify all menu items navigate correctly
-- [ ] Verify `uv run ty check src/` passes after refactor
+- [x] Verify app starts correctly after refactor
+- [x] Verify all menu items navigate correctly
+- [x] Verify `uv run ty check src/` passes after refactor
+---
 
 ---
 
@@ -179,9 +180,9 @@ Some parts of the codebase lack proper type annotations.
 - [x] Add return type hints to all public methods
 - [x] Replace `Any` with specific types where possible
 - [x] Add Protocol classes for dependency injection points
-
 ### Self-Check (Production Logic)
 - [ ] Verify `uv run ty check src/` passes with no errors
+---
 
 ---
 
@@ -204,11 +205,11 @@ Tests are currently flat in `tests/` but should mirror the feature module struct
 - [x] Create `tests/shared/` for shared utility tests
 - [ ] Move remaining flat tests to appropriate feature directories
 - [ ] Add integration tests for each feature
-
 ### Self-Check (Production Logic)
 - [ ] Verify `uv run pytest tests/features/ -v` runs all feature tests
 - [ ] Verify `uv run pytest tests/shared/ -v` runs all shared tests
 - [ ] Verify `uv run pytest -m integration` for blockchain tests
+---
 
 ---
 
@@ -229,12 +230,12 @@ Need more integration tests against real Symbol testnet nodes.
 - [ ] Add integration tests for aggregate transactions
 - [ ] Document test account credentials for CI/CD
 - [ ] Ensure tests can run with `uv run pytest -m integration`
-
 ### Self-Check (Production Logic)
 - [ ] Run transfer on testnet and verify confirmation
 - [ ] Run mosaic creation on testnet and verify confirmation
 - [ ] Run aggregate bonded workflow on testnet
 - [ ] Verify all transactions appear in explorer
+---
 
 ---
 
@@ -253,7 +254,6 @@ Some error scenarios lack user-friendly messages and logging.
 - [ ] Sanitize sensitive data in logs (no private keys)
 - [ ] Create user-friendly error message mapping
 - [ ] Add structured logging with context fields
-
 ### Self-Check (Production Logic)
 - [ ] Verify private keys are not logged
 - [ ] Verify error messages are user-friendly

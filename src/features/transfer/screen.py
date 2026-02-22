@@ -1,6 +1,5 @@
 """Transfer-related modal screens for Symbol Quick Wallet."""
 
-import logging
 from typing import Protocol, cast
 
 from textual.app import ComposeResult
@@ -9,9 +8,10 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Select, Static
 
+from src.shared.logging import get_logger
 from src.features.transfer.validators import TransferAmountValidator
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WalletLike(Protocol):
@@ -170,7 +170,7 @@ class TransactionStatusScreen(BaseModalScreen):
             spinner = frames[self._loading_step]
             try:
                 status_widget = cast(Static, self.query_one("#tx-status-value"))
-                current = status_widget.renderable or ""
+                current = getattr(status_widget, "renderable", None) or ""
                 if "[yellow]" in str(current):
                     status_widget.update(
                         f"[yellow]{spinner} {current.replace('[yellow]', '').replace('[/yellow]', '')}[/yellow]"

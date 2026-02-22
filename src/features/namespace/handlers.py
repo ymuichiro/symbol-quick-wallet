@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING
 
@@ -10,6 +9,7 @@ from textual.containers import Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Label
 
+from src.shared.logging import get_logger
 from src.features.namespace.screen import (
     LinkAddressAliasScreen,
     LinkAddressAliasSubmitted,
@@ -31,7 +31,7 @@ from src.transaction import TransactionManager
 if TYPE_CHECKING:
     from src.__main__ import WalletApp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class NamespaceHandlersMixin:

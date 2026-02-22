@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,6 +19,7 @@ from src.features.transfer.screen import (
     TransactionStatusScreen,
 )
 from src.features.account.screens import QRScannerScreen
+from src.shared.logging import format_error_for_user, get_logger
 from src.shared.network import NetworkError
 from src.shared.protocols import WalletProtocol
 from src.shared.transaction_queue import QueuedTransaction, TransactionQueue
@@ -29,7 +29,7 @@ from src.transaction import TransactionManager
 if TYPE_CHECKING:
     from src.__main__ import WalletApp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TransferHandlersMixin:
@@ -114,12 +114,16 @@ class TransferHandlersMixin:
                 TransactionConfirmScreen(recipient, self.mosaics, message, fee),
                 self._on_transaction_confirmed,
             )
-        except ValueError:
+        except ValueError as e:
+            logger.warning(
+                "Transaction validation failed", extra={"context": {"error": str(e)}}
+            )
             result.update(
                 "[red]Error: Invalid mosaic ID or amount. Use hex for mosaic ID.[/red]"
             )
         except Exception as e:
-            result.update(f"[red]Error: {str(e)}[/red]")
+            logger.error("Transaction failed", extra={"context": {"error": str(e)}})
+            result.update(f"[red]Error: {format_error_for_user(e)}[/red]")
 
     def _on_transaction_confirmed(self: "WalletApp", result: Any) -> None:
         if not result:
@@ -169,8 +173,15 @@ class TransferHandlersMixin:
                     self._on_transaction_send_finished, signed, status, None
                 )
             except Exception as e:
+                logger.error(
+                    "Transaction submission failed",
+                    extra={"context": {"error": str(e)}},
+                )
                 self.call_from_thread(
-                    self._on_transaction_send_finished, None, None, str(e)
+                    self._on_transaction_send_finished,
+                    None,
+                    None,
+                    format_error_for_user(e),
                 )
 
         threading.Thread(target=worker, daemon=True).start()
@@ -272,9 +283,13 @@ class TransferHandlersMixin:
                 severity="information",
             )
         except ValueError as e:
-            result.update(f"[red]Error: {str(e)}[/red]")
+            logger.warning(
+                "Queue add validation failed", extra={"context": {"error": str(e)}}
+            )
+            result.update(f"[red]Error: {format_error_for_user(e)}[/red]")
         except Exception as e:
-            result.update(f"[red]Error: {str(e)}[/red]")
+            logger.error("Failed to add to queue", extra={"context": {"error": str(e)}})
+            result.update(f"[red]Error: {format_error_for_user(e)}[/red]")
 
     def view_queue(self: "WalletApp") -> None:
         if self._tx_queue is None:

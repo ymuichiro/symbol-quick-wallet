@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +9,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label
 
+from src.shared.logging import get_logger
 from src.features.lock.screen import (
     LockResultScreen,
     LocksOverviewScreen,
@@ -25,7 +25,7 @@ from src.shared.protocols import WalletProtocol
 if TYPE_CHECKING:
     from src.__main__ import WalletApp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LockHandlersMixin:

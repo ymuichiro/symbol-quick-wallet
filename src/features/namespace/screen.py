@@ -1,6 +1,5 @@
 """Namespace-related modal screens for Symbol Quick Wallet."""
 
-import logging
 from typing import Any, cast
 
 from textual.app import ComposeResult
@@ -9,7 +8,9 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseModalScreen(ModalScreen):

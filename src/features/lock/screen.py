@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol, cast
 
 from textual.app import ComposeResult
@@ -11,6 +10,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Select, Static
 
+from src.shared.logging import get_logger
 from src.features.lock.service import (
     HashLockInfo,
     LockHashAlgorithm,
@@ -19,7 +19,7 @@ from src.features.lock.service import (
     SecretProofPair,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AppProtocol(Protocol):

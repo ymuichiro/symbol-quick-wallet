@@ -9,13 +9,14 @@ are organized in their respective feature modules:
 - src.features.account.screens: Account management screens
 """
 
-import logging
 from typing import Callable, Protocol, cast
 
 import qrcode
 from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Static
+
+from src.shared.logging import get_logger
 
 from src.features.transfer.screen import (
     BatchTransactionResultScreen,
@@ -63,7 +64,7 @@ from src.features.account.screens import (
     SetupPasswordScreen,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WalletLike(Protocol):

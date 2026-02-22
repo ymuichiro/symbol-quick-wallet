@@ -15,6 +15,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 - [ ] Verify NetworkError contains meaningful message
 - [ ] Test with unreachable node URL
 ---
+---
 
 ---
 
@@ -35,6 +36,7 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - [ ] Verify amount exceeds balance is rejected
 - [ ] Verify valid amounts are normalized correctly
 ---
+---
 
 ---
 
@@ -54,6 +56,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 - [ ] Run `uv run pytest -m unit -v` for unit tests
 - [ ] Run `uv run pytest -m integration -v` for integration tests
 ---
+---
 
 ---
 
@@ -71,6 +74,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 - [ ] Restore network and verify connection state updates
 - [ ] Verify periodic connection status checks
 ---
+---
 
 ---
 
@@ -84,6 +88,7 @@ After submitting a transaction, the app should poll for confirmation status and 
 - [ ] Submit transfer on testnet and verify polling starts
 - [ ] Verify UI updates when transaction confirmed
 - [ ] Verify error handling for failed transaction
+---
 ---
 
 ---
@@ -111,6 +116,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [ ] Verify `uv run ruff check src/` passes
 - [ ] Verify `uv run pytest -q` passes
 ---
+---
 
 ---
 
@@ -135,6 +141,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Verify no import errors after split
 - [x] Verify all screens load correctly
 - [x] Verify `uv run ty check src/` passes after split
+---
 ---
 
 ---
@@ -161,6 +168,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Verify all menu items navigate correctly
 - [x] Verify `uv run ty check src/` passes after refactor
 ---
+---
 
 ---
 
@@ -182,6 +190,7 @@ Some parts of the codebase lack proper type annotations.
 - [x] Add Protocol classes for dependency injection points
 ### Self-Check (Production Logic)
 - [ ] Verify `uv run ty check src/` passes with no errors
+---
 ---
 
 ---
@@ -210,6 +219,7 @@ Tests are currently flat in `tests/` but should mirror the feature module struct
 - [ ] Verify `uv run pytest tests/shared/ -v` runs all shared tests
 - [ ] Verify `uv run pytest -m integration` for blockchain tests
 ---
+---
 
 ---
 
@@ -236,12 +246,13 @@ Need more integration tests against real Symbol testnet nodes.
 - [ ] Run aggregate bonded workflow on testnet
 - [ ] Verify all transactions appear in explorer
 ---
+---
 
 ---
 
 ## Improve logging and error messages
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: low
 
 Some error scenarios lack user-friendly messages and logging.
@@ -250,11 +261,11 @@ Some error scenarios lack user-friendly messages and logging.
 - Some errors show raw exception messages
 - Missing context in error logs
 **Required changes:**
-- [ ] Add log level configuration (DEBUG for dev, INFO for prod)
-- [ ] Sanitize sensitive data in logs (no private keys)
-- [ ] Create user-friendly error message mapping
-- [ ] Add structured logging with context fields
+- [x] Add log level configuration (DEBUG for dev, INFO for prod)
+- [x] Sanitize sensitive data in logs (no private keys)
+- [x] Create user-friendly error message mapping
+- [x] Add structured logging with context fields
 ### Self-Check (Production Logic)
-- [ ] Verify private keys are not logged
-- [ ] Verify error messages are user-friendly
-- [ ] Verify log levels can be configured
+- [x] Verify private keys are not logged
+- [x] Verify error messages are user-friendly
+- [x] Verify log levels can be configured

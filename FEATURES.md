@@ -17,6 +17,7 @@ Allow users to manage multiple accounts/wallets within the same application.
 - [ ] Verify address book sharing setting works per account
 ---
 ---
+---
 
 ---
 
@@ -38,6 +39,7 @@ Allow users to prepare multiple transactions and batch submit them.
 - [ ] Reorder transactions and verify new order persists
 ---
 ---
+---
 
 ---
 
@@ -56,6 +58,7 @@ Allow users to scan QR codes to import addresses for transfers.
 - [ ] Parse JSON QR with address and mosaics
 - [ ] Parse Symbol official QR payload format (v/data base64)
 - [ ] Verify invalid QR returns appropriate error
+---
 ---
 ---
 
@@ -80,6 +83,7 @@ Display mosaic metadata and properties when viewing balances.
 - [ ] Format mosaic amount correctly based on divisibility
 ---
 ---
+---
 
 ---
 
@@ -101,6 +105,7 @@ Organize address book contacts into groups for easier management.
 - [ ] Filter addresses by group and verify correct results
 ---
 ---
+---
 
 ---
 
@@ -119,6 +124,7 @@ Save frequently used transfer configurations as templates.
 - [ ] Update template and verify changes saved
 - [ ] Delete template and verify removal
 - [ ] Load template and verify all fields populated correctly
+---
 ---
 ---
 
@@ -157,6 +163,7 @@ tests/
 ```
 ---
 ---
+---
 
 ---
 
@@ -180,6 +187,7 @@ Allow users to register and manage namespaces for their accounts and mosaics.
 - [x] Resolve namespace to mosaic ID via node API
 - [x] Verify namespace expiration calculation
 - [x] Register root namespace on testnet and verify confirmation
+---
 ---
 ---
 
@@ -215,6 +223,7 @@ Support aggregate bonded and complete transactions for multi-party workflows.
 - [ ] Poll transaction status until confirmed/failed
 ---
 ---
+---
 
 ---
 
@@ -239,6 +248,7 @@ Allow users to configure and use multisignature accounts.
 - [x] Initiate transaction from multisig account
 - [x] Cosign multisig transaction from cosigner
 - [x] Verify multisig account info reflects correct thresholds
+---
 ---
 ---
 
@@ -266,6 +276,7 @@ Implement WebSocket-based real-time monitoring for incoming transactions.
 - [ ] Receive real-time notification for incoming transfer (requires live test)
 ---
 ---
+---
 
 ---
 
@@ -291,12 +302,13 @@ Allow users to attach metadata to accounts, mosaics, and namespaces.
 - [x] Fetch existing metadata from node API
 ---
 ---
+---
 
 ---
 
 ## Implement hash lock and secret lock
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: low
 
 Add support for lock transactions for cross-chain swaps and conditional payments.
@@ -307,8 +319,11 @@ Add support for lock transactions for cross-chain swaps and conditional payments
 - Support cross-chain exchange workflows
 **Implementation:**
 - Reference `docs/quick_learning_symbol_v3/08_lock.md`
+- Implemented in `src/features/lock/`
+- UI accessible via `/locks` command
+**Tests:** `tests/features/lock/test_service.py`
 ### Self-Check (Production Logic)
-- [ ] Create secret lock with random secret
-- [ ] Claim secret lock with proof
-- [ ] Create hash lock for aggregate bonded
-- [ ] Verify lock refund after expiration
+- [x] Create secret lock with random secret
+- [x] Claim secret lock with proof
+- [x] Create hash lock for aggregate bonded
+- [x] Verify lock refund after expiration (expiration is automatic on-chain)

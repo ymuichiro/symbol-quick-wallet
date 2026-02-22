@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from symbolchain.facade.SymbolFacade import SymbolFacade
 
+    from src.shared.network import NetworkClient
     from src.wallet import AccountInfo
 
 
@@ -22,6 +23,7 @@ class WalletProtocol(Protocol):
     password: str | None
     facade: SymbolFacade
     XYM_DIVISIBILITY: int
+    _network_client: NetworkClient
 
     def is_first_run(self) -> bool: ...
     def has_wallet(self) -> bool: ...

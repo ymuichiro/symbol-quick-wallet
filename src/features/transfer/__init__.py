@@ -1,5 +1,6 @@
 """Transfer feature module for Symbol Quick Wallet."""
 
+from src.features.transfer.handlers import TransferHandlersMixin
 from src.features.transfer.service import TransferService
 from src.features.transfer.validators import TransferAmountValidator
 from src.features.transfer.screen import (
@@ -15,6 +16,7 @@ from src.features.transfer.screen import (
 )
 
 __all__ = [
+    "TransferHandlersMixin",
     "TransferService",
     "TransferAmountValidator",
     "TransactionConfirmScreen",

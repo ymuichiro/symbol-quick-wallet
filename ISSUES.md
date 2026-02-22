@@ -14,6 +14,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 ---
 ---
 ---
+---
 
 ---
 
@@ -28,6 +29,7 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - Check against mosaic divisibility
 - Show inline validation errors
 - Prevent submission of invalid data
+---
 ---
 ---
 ---
@@ -52,6 +54,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 ---
 ---
 ---
+---
 
 ---
 
@@ -69,6 +72,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 ---
 ---
 ---
+---
 
 ---
 
@@ -78,6 +82,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 - **Priority**: medium
 
 After submitting a transaction, the app should poll for confirmation status and update the UI accordingly instead of just showing a loading indicator.
+---
 
 ---
 
@@ -99,6 +104,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Create corresponding test directories under `tests/features/`
 - [x] Update all imports and exports
 - [x] Run full test suite to verify no regressions
+---
 
 ---
 
@@ -119,6 +125,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [ ] Create `src/features/mosaic/screens.py` for mosaic screens
 - [ ] Create `src/features/account/screens.py` for account management screens
 - [ ] Keep shared/common screens in `src/screens.py` (base classes, loading, etc.)
+---
 
 ---
 
@@ -138,6 +145,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [ ] Extract address book handlers to `src/features/address_book/handlers.py`
 - [ ] Extract account management logic to `src/features/account/service.py`
 - [ ] Keep only app initialization and routing in `__main__.py`
+---
 
 ---
 
@@ -157,6 +165,7 @@ Some parts of the codebase lack proper type annotations.
 - [ ] Add return type hints to all public methods
 - [ ] Replace `Any` with specific types where possible
 - [ ] Add Protocol classes for dependency injection points
+---
 
 ---
 
@@ -176,6 +185,7 @@ Tests are currently flat in `tests/` but should mirror the feature module struct
 - [ ] Create `tests/features/mosaic/` directory
 - [ ] Move existing tests to appropriate feature directories
 - [ ] Create `tests/shared/` for shared utility tests
+---
 
 ---
 
@@ -195,6 +205,7 @@ Need more integration tests against real Symbol testnet nodes.
 - [ ] Add integration tests for mosaic operations
 - [ ] Document test account credentials for CI/CD
 - [ ] Ensure tests can run with `uv run pytest -m integration`
+---
 
 ---
 

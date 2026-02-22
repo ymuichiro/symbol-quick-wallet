@@ -96,28 +96,35 @@ Save frequently used transfer configurations as templates.
 
 ## Feature-based module organization
 
-- **Status**: pending
+- **Status**: completed
 - **Priority**: high
 
 Reorganize the codebase into feature-based modules for better maintainability and testability.
-**Target Structure:**
+**Structure:**
 ```
 src/
   features/
-    transfer/           # Transfer feature (service.py, screen.py, validators.py)
-    address_book/       # Address book feature
-    mosaic/             # Mosaic management feature
-  shared/               # Shared utilities (network, validation, clipboard)
+    transfer/           # Transfer feature (service.py, screen.py, validators.py, handlers.py)
+    address_book/       # Address book feature (service.py, screen.py, handlers.py)
+    mosaic/             # Mosaic management feature (service.py, screen.py)
+    account/            # Account management feature (service.py, handlers.py)
+    aggregate/          # Aggregate transactions feature (service.py, screen.py)
+  shared/               # Shared utilities (network, validation, clipboard, qr_scanner, etc.)
+  screens.py            # General modal screens
+  wallet.py             # Core wallet functionality
+  transaction.py        # Transaction management
 ```
-**Tasks:**
-- [ ] Create `src/features/` directory structure
-- [ ] Migrate transfer functionality to `src/features/transfer/`
-- [ ] Migrate address book to `src/features/address_book/`
-- [ ] Migrate mosaic management to `src/features/mosaic/`
-- [ ] Move shared utilities to `src/shared/`
-- [ ] Update tests to mirror feature structure (`tests/features/`)
-- [ ] Update imports throughout codebase
-- [ ] Verify all tests pass after migration
+**Tests:**
+```
+tests/
+  features/
+    transfer/           # Transfer feature tests
+    address_book/       # Address book tests
+    mosaic/             # Mosaic tests
+    account/            # Account management tests
+    aggregate/          # Aggregate transaction tests
+  shared/               # Shared utility tests (validation, network, clipboard, etc.)
+```
 
 ---
 

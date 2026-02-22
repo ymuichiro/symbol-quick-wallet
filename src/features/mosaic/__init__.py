@@ -3,13 +3,17 @@
 from src.features.mosaic.service import MosaicService
 from src.features.mosaic.screen import (
     CreateMosaicScreen,
-    MosaicMetadataScreen,
     CreateMosaicDialogSubmitted,
+    HarvestingLinkScreen,
+    HarvestingUnlinkScreen,
+    MosaicMetadataScreen,
 )
 
 __all__ = [
     "MosaicService",
     "CreateMosaicScreen",
-    "MosaicMetadataScreen",
     "CreateMosaicDialogSubmitted",
+    "HarvestingLinkScreen",
+    "HarvestingUnlinkScreen",
+    "MosaicMetadataScreen",
 ]

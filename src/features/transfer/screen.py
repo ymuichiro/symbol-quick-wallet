@@ -1,7 +1,7 @@
 """Transfer-related modal screens for Symbol Quick Wallet."""
 
 import logging
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal

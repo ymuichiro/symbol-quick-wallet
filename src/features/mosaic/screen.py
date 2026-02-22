@@ -201,3 +201,64 @@ class MosaicMetadataScreen(BaseModalScreen):
             self.notify(f"Copied: {mosaic_id}", severity="information")
         elif event.button.id == "close-button":
             self.app.pop_screen()
+
+
+class HarvestingLinkScreen(BaseModalScreen):
+    def compose(self) -> ComposeResult:
+        yield Label("🔗 Link Harvesting Account")
+        yield Label(
+            "Enter the public key of the node you want to delegate harvesting to:"
+        )
+        yield Input(
+            placeholder="Remote Public Key",
+            id="remote-public-key-input",
+        )
+        yield Label(
+            "⚠️ Make sure you trust this node. Once linked, the node can harvest on your behalf."
+        )
+        yield Horizontal(
+            Button("✓ Link", id="link-button", variant="primary"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "link-button":
+            remote_public_key_input = cast(
+                Input, self.query_one("#remote-public-key-input")
+            )
+            remote_public_key = remote_public_key_input.value
+            if remote_public_key:
+                self.post_message(
+                    self.HarvestingLinkDialogSubmitted(
+                        remote_public_key=remote_public_key
+                    )
+                )
+                self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class HarvestingLinkDialogSubmitted(Message):
+        def __init__(self, remote_public_key):
+            super().__init__()
+            self.remote_public_key = remote_public_key
+
+
+class HarvestingUnlinkScreen(BaseModalScreen):
+    def compose(self) -> ComposeResult:
+        yield Label("🔗 Unlink Harvesting Account")
+        yield Label("Are you sure you want to unlink your harvesting account?")
+        yield Label("⚠️ You will stop harvesting and may lose rewards.")
+        yield Horizontal(
+            Button("✓ Unlink", id="unlink-button", variant="primary"),
+            Button("✗ Cancel", id="cancel-button"),
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "unlink-button":
+            self.post_message(self.HarvestingUnlinkDialogSubmitted())
+            self.app.pop_screen()
+        elif event.button.id == "cancel-button":
+            self.app.pop_screen()
+
+    class HarvestingUnlinkDialogSubmitted(Message):
+        pass

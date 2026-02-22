@@ -1,13 +1,13 @@
 """Address book-related modal screens for Symbol Quick Wallet."""
 
 import logging
-from typing import Any, cast
+from typing import cast
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Label, Select, Static
+from textual.widgets import Button, DataTable, Input, Label, Select
 
 logger = logging.getLogger(__name__)
 

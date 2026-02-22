@@ -6,13 +6,13 @@ from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.wallet import Wallet, AccountInfo, WalletConfig
 from src.transaction import TransactionManager
-from src.validation import (
+from src.shared.validation import (
     AddressValidator,
     AmountValidator,
     MosaicIdValidator,
     ValidationResult,
 )
-from src.network import TimeoutConfig, RetryConfig
+from src.shared.network import TimeoutConfig, RetryConfig
 
 
 @pytest.fixture

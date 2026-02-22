@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.clipboard import copy_text, copy_with_osc52, copy_with_pyperclip
+from src.shared.clipboard import copy_text, copy_with_osc52, copy_with_pyperclip
 
 
 @pytest.mark.unit
@@ -37,8 +37,8 @@ def test_copy_with_pyperclip_success(monkeypatch):
 
 @pytest.mark.unit
 def test_copy_text_falls_back_to_osc52(monkeypatch):
-    monkeypatch.setattr("src.clipboard.copy_with_pyperclip", lambda text: False)
-    monkeypatch.setattr("src.clipboard.copy_with_osc52", lambda text: True)
+    monkeypatch.setattr("src.shared.clipboard.copy_with_pyperclip", lambda text: False)
+    monkeypatch.setattr("src.shared.clipboard.copy_with_osc52", lambda text: True)
 
     result = copy_text("ABC")
 
@@ -48,8 +48,8 @@ def test_copy_text_falls_back_to_osc52(monkeypatch):
 
 @pytest.mark.unit
 def test_copy_text_reports_failure(monkeypatch):
-    monkeypatch.setattr("src.clipboard.copy_with_pyperclip", lambda text: False)
-    monkeypatch.setattr("src.clipboard.copy_with_osc52", lambda text: False)
+    monkeypatch.setattr("src.shared.clipboard.copy_with_pyperclip", lambda text: False)
+    monkeypatch.setattr("src.shared.clipboard.copy_with_osc52", lambda text: False)
 
     result = copy_text("ABC")
 

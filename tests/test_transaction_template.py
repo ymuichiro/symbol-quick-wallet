@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.transaction_template import TemplateStorage, TransactionTemplate
+from src.shared.transaction_template import TemplateStorage, TransactionTemplate
 
 
 class TestTransactionTemplate:

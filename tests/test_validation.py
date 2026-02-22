@@ -1,6 +1,6 @@
 import pytest
 
-from src.validation import (
+from src.shared.validation import (
     AddressValidator,
     AmountValidator,
     MosaicIdValidator,

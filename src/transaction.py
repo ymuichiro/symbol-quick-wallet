@@ -9,8 +9,8 @@ from typing import Any, Callable, cast
 from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
-from src.network import NetworkClient, NetworkError
-from src.validation import AmountValidator, MosaicIdValidator
+from src.shared.network import NetworkClient, NetworkError
+from src.shared.validation import AmountValidator, MosaicIdValidator
 
 logger = logging.getLogger(__name__)
 

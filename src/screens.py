@@ -10,7 +10,7 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, Select, Static
 
-from src.validation import AmountValidator
+from src.shared.validation import AmountValidator
 
 logger = logging.getLogger(__name__)
 

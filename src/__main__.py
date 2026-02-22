@@ -83,19 +83,19 @@ from src.screens import (
     TransactionResultScreen,
     TransactionStatusScreen,
 )
-from src.transaction_template import TemplateStorage, TransactionTemplate
-from src.transaction_queue import QueuedTransaction, TransactionQueue
-from src.connection_state import (
+from src.shared.transaction_template import TemplateStorage, TransactionTemplate
+from src.shared.transaction_queue import QueuedTransaction, TransactionQueue
+from src.shared.connection_state import (
     ConnectionMonitor,
     ConnectionMonitorConfig,
     ConnectionState,
     get_connection_state_message,
 )
-from src.network import NetworkError, NetworkErrorType
-from src.styles import CSS
+from src.shared.network import NetworkError, NetworkErrorType
+from src.shared.styles import CSS
 from src.transaction import TransactionManager
 from src.wallet import Wallet
-from src.clipboard import copy_text
+from src.shared.clipboard import copy_text
 
 
 class WalletApp(App):

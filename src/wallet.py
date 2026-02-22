@@ -12,7 +12,7 @@ from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
 import logging
 
-from src.network import (
+from src.shared.network import (
     NetworkClient,
     NetworkError,
     RetryConfig,
@@ -117,6 +117,7 @@ class Wallet:
         self.accounts_file = self.wallet_dir / "accounts.json"
         self.address_book_file = self.wallet_dir / "address_book.json"
         self.shared_address_book_file = self.wallet_dir / "shared_address_book.json"
+        self.contact_groups_file = self.wallet_dir / "contact_groups.json"
         self.config_file = self.wallet_dir / "config.json"
         self.window_size = "80x24"
         self.theme = "dark"
@@ -124,6 +125,7 @@ class Wallet:
         self.private_key = None
         self.public_key = None
         self.address = None
+        self.config = config or WalletConfig()
         self._load_config()
         self.facade = SymbolFacade(self.network_name)
         self._currency_mosaic_id: int | None = None
@@ -131,7 +133,7 @@ class Wallet:
         self._current_account_index: int = 0
         self._load_accounts_registry()
         self._load_address_book()
-        self.config = config or WalletConfig()
+        self._load_contact_groups()
         self._network_client = NetworkClient(
             node_url=self.node_url,
             timeout_config=self.config.timeout_config,
@@ -216,6 +218,20 @@ class Wallet:
                 self.network_name = config.get("network", "testnet")
                 self.window_size = config.get("window_size", "80x24")
                 self.theme = config.get("theme", "dark")
+                timeout_cfg = config.get("timeout", {})
+                if timeout_cfg:
+                    self.config.timeout_config = TimeoutConfig(
+                        connect_timeout=timeout_cfg.get("connect_timeout", 5.0),
+                        read_timeout=timeout_cfg.get("read_timeout", 15.0),
+                        operation_timeout=timeout_cfg.get("operation_timeout", 30.0),
+                    )
+                retry_cfg = config.get("retry", {})
+                if retry_cfg:
+                    self.config.retry_config = RetryConfig(
+                        max_retries=retry_cfg.get("max_retries", 3),
+                        base_delay=retry_cfg.get("base_delay", 1.0),
+                        max_delay=retry_cfg.get("max_delay", 30.0),
+                    )
         else:
             self.node_url = "http://sym-test-01.opening-line.jp:3000"
             self.network_name = "testnet"
@@ -224,11 +240,23 @@ class Wallet:
             self._save_config()
 
     def _save_config(self):
+        timeout_cfg = self.config.timeout_config or TimeoutConfig()
+        retry_cfg = self.config.retry_config or RetryConfig()
         config = {
             "node_url": self.node_url,
             "network": self.network_name,
             "window_size": self.window_size,
             "theme": self.theme,
+            "timeout": {
+                "connect_timeout": timeout_cfg.connect_timeout,
+                "read_timeout": timeout_cfg.read_timeout,
+                "operation_timeout": timeout_cfg.operation_timeout,
+            },
+            "retry": {
+                "max_retries": retry_cfg.max_retries,
+                "base_delay": retry_cfg.base_delay,
+                "max_delay": retry_cfg.max_delay,
+            },
         }
         with open(self.config_file, "w") as f:
             json.dump(config, f, indent=2)
@@ -440,17 +468,97 @@ class Wallet:
         else:
             self.address_book = {}
 
-    def add_address(self, address, name, note=""):
-        self.address_book[address] = {"name": name, "address": address, "note": note}
+    def _load_contact_groups(self):
+        if self.contact_groups_file.exists():
+            with open(self.contact_groups_file, "r") as f:
+                self.contact_groups = json.load(f)
+        else:
+            self.contact_groups = {}
+
+    def _save_contact_groups(self):
+        account = self.get_current_account()
+        if account and not account.address_book_shared:
+            groups_file = self._get_contact_groups_path(account.address)
+            with open(groups_file, "w") as f:
+                json.dump(self.contact_groups, f, indent=2)
+        else:
+            with open(self.contact_groups_file, "w") as f:
+                json.dump(self.contact_groups, f, indent=2)
+
+    def _get_contact_groups_path(self, address: str) -> Path:
+        normalized = self._normalize_address(address)
+        return self.wallet_dir / f"contact_groups_{normalized}.json"
+
+    def create_contact_group(self, name: str, color: str = "") -> str:
+        import uuid
+
+        group_id = str(uuid.uuid4())[:8]
+        self.contact_groups[group_id] = {
+            "id": group_id,
+            "name": name,
+            "color": color,
+        }
+        self._save_contact_groups()
+        logger.info(f"Contact group created: {name} ({group_id})")
+        return group_id
+
+    def update_contact_group(self, group_id: str, name: str, color: str = "") -> bool:
+        if group_id in self.contact_groups:
+            self.contact_groups[group_id]["name"] = name
+            self.contact_groups[group_id]["color"] = color
+            self._save_contact_groups()
+            logger.info(f"Contact group updated: {name} ({group_id})")
+            return True
+        return False
+
+    def delete_contact_group(self, group_id: str) -> bool:
+        if group_id in self.contact_groups:
+            for addr, info in self.address_book.items():
+                if info.get("group_id") == group_id:
+                    info["group_id"] = None
+            del self.contact_groups[group_id]
+            self._save_contact_groups()
+            self._save_address_book()
+            logger.info(f"Contact group deleted: {group_id}")
+            return True
+        return False
+
+    def get_contact_groups(self) -> dict[str, dict[str, str]]:
+        return self.contact_groups.copy()
+
+    def get_contact_group(self, group_id: str) -> dict[str, str] | None:
+        return self.contact_groups.get(group_id)
+
+    def get_addresses_by_group(self, group_id: str | None) -> dict[str, dict[str, str]]:
+        if group_id is None:
+            return {
+                addr: info
+                for addr, info in self.address_book.items()
+                if not info.get("group_id")
+            }
+        return {
+            addr: info
+            for addr, info in self.address_book.items()
+            if info.get("group_id") == group_id
+        }
+
+    def add_address(self, address, name, note="", group_id=None):
+        self.address_book[address] = {
+            "name": name,
+            "address": address,
+            "note": note,
+            "group_id": group_id,
+        }
         self._save_address_book()
         logger.info(f"Address added to book: {name} ({address})")
 
-    def update_address(self, address, name, note):
+    def update_address(self, address, name, note, group_id=None):
         if address in self.address_book:
             self.address_book[address] = {
                 "name": name,
                 "address": address,
                 "note": note,
+                "group_id": group_id,
             }
             self._save_address_book()
 
@@ -464,7 +572,7 @@ class Wallet:
 
     def get_address_info(self, address):
         return self.address_book.get(
-            address, {"name": "", "address": address, "note": ""}
+            address, {"name": "", "address": address, "note": "", "group_id": None}
         )
 
     def encrypt_private_key(self, password):
@@ -597,6 +705,112 @@ class Wallet:
             )
         except Exception:
             return None
+
+    def get_mosaic_metadata(self, mosaic_id: int) -> list[dict[str, Any]]:
+        metadata_type = 1
+        try:
+            result = self._network_client.get_optional(
+                f"/metadata?targetId={mosaic_id}&metadataType={metadata_type}",
+                context="Fetch mosaic metadata",
+            )
+            if result is None:
+                return []
+            data = result.get("data", [])
+            metadata_list = []
+            for entry in data:
+                metadata_entry = entry.get("metadataEntry", {})
+                value_hex = metadata_entry.get("value", "")
+                try:
+                    value = bytes.fromhex(value_hex).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    value = value_hex
+                metadata_list.append(
+                    {
+                        "key": hex(metadata_entry.get("scopedMetadataKey", 0)),
+                        "value": value,
+                        "source_address": metadata_entry.get("sourceAddress", ""),
+                        "target_address": metadata_entry.get("targetAddress", ""),
+                    }
+                )
+            return metadata_list
+        except Exception:
+            return []
+
+    def get_mosaic_namespace_name(self, mosaic_id: int) -> str | None:
+        try:
+            result = self._network_client.get_optional(
+                f"/namespaces/mosaic/{mosaic_id}",
+                context="Fetch mosaic namespace",
+            )
+            if result is None:
+                return None
+            data = result.get("data", [])
+            if not data:
+                return None
+            namespace_info = data[0].get("namespace", {})
+            name = namespace_info.get("name", "")
+            return name if name else None
+        except Exception:
+            return None
+
+    def get_mosaic_full_info(self, mosaic_id: int) -> dict[str, Any]:
+        mosaic_info = self.get_mosaic_info(mosaic_id)
+        if mosaic_info is None:
+            return {
+                "mosaic_id": mosaic_id,
+                "mosaic_id_hex": hex(mosaic_id),
+                "found": False,
+            }
+
+        mosaic_data = mosaic_info.get("mosaic", mosaic_info)
+
+        flags_value = mosaic_data.get("flags", 0)
+        flags = {
+            "supply_mutable": bool(flags_value & 0x02),
+            "transferable": bool(flags_value & 0x01),
+            "restrictable": bool(flags_value & 0x04),
+            "revokable": bool(flags_value & 0x08),
+        }
+
+        owner_address_raw = mosaic_data.get("ownerAddress", "")
+        if owner_address_raw:
+            try:
+                if owner_address_raw.startswith("0x"):
+                    owner_address_raw = owner_address_raw[2:]
+                owner_address = owner_address_raw
+            except Exception:
+                owner_address = owner_address_raw
+        else:
+            owner_address = ""
+
+        namespace_name = self.get_mosaic_namespace_name(mosaic_id)
+        mosaic_name = (
+            namespace_name if namespace_name else self.get_mosaic_name(mosaic_id)
+        )
+
+        metadata = self.get_mosaic_metadata(mosaic_id)
+
+        description = ""
+        for meta in metadata:
+            key = meta.get("key", "")
+            if key.lower() in ("0x0", "0x00", "0"):
+                description = meta.get("value", "")
+                break
+
+        return {
+            "mosaic_id": mosaic_id,
+            "mosaic_id_hex": hex(mosaic_id),
+            "found": True,
+            "name": mosaic_name,
+            "divisibility": mosaic_data.get("divisibility", 0),
+            "supply": int(mosaic_data.get("supply", 0)),
+            "owner_address": owner_address,
+            "flags": flags,
+            "duration": int(mosaic_data.get("duration", 0)),
+            "start_height": int(mosaic_data.get("startHeight", 0)),
+            "metadata": metadata,
+            "description": description,
+        }
 
     def get_currency_mosaic_id(self) -> int | None:
         if self._currency_mosaic_id is not None:
@@ -934,6 +1148,7 @@ class Wallet:
     def _load_address_book_for_account(self, account: AccountInfo):
         if account.address_book_shared:
             self._load_address_book()
+            self._load_contact_groups()
         else:
             account_book_file = self._get_account_address_book_path(account.address)
             if account_book_file.exists():
@@ -941,6 +1156,12 @@ class Wallet:
                     self.address_book = json.load(f)
             else:
                 self.address_book = {}
+            groups_file = self._get_contact_groups_path(account.address)
+            if groups_file.exists():
+                with open(groups_file, "r") as f:
+                    self.contact_groups = json.load(f)
+            else:
+                self.contact_groups = {}
 
     def _get_account_address_book_path(self, address: str) -> Path:
         normalized = self._normalize_address(address)

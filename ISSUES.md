@@ -17,6 +17,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 ---
 ---
 ---
+---
 
 ---
 
@@ -36,6 +37,7 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - [ ] Verify amounts with too many decimals are rejected
 - [ ] Verify amount exceeds balance is rejected
 - [ ] Verify valid amounts are normalized correctly
+---
 ---
 ---
 ---
@@ -60,6 +62,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 ---
 ---
 ---
+---
 
 ---
 
@@ -79,6 +82,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 ---
 ---
 ---
+---
 
 ---
 
@@ -92,6 +96,7 @@ After submitting a transaction, the app should poll for confirmation status and 
 - [ ] Submit transfer on testnet and verify polling starts
 - [ ] Verify UI updates when transaction confirmed
 - [ ] Verify error handling for failed transaction
+---
 ---
 ---
 ---
@@ -123,6 +128,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 ---
 ---
 ---
+---
 
 ---
 
@@ -147,6 +153,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Verify no import errors after split
 - [x] Verify all screens load correctly
 - [x] Verify `uv run ty check src/` passes after split
+---
 ---
 ---
 ---
@@ -177,6 +184,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 ---
 ---
 ---
+---
 
 ---
 
@@ -198,6 +206,7 @@ Some parts of the codebase lack proper type annotations.
 - [x] Add Protocol classes for dependency injection points
 ### Self-Check (Production Logic)
 - [ ] Verify `uv run ty check src/` passes with no errors
+---
 ---
 ---
 ---
@@ -230,12 +239,13 @@ Tests are currently flat in `tests/` but should mirror the feature module struct
 ---
 ---
 ---
+---
 
 ---
 
 ## Add integration tests for real blockchain
 
-- **Status**: in_progress
+- **Status**: completed
 - **Priority**: medium
 
 Need more integration tests against real Symbol testnet nodes.
@@ -246,15 +256,16 @@ Need more integration tests against real Symbol testnet nodes.
 **Required changes:**
 - [x] Add `@pytest.mark.integration` tests for account operations
 - [x] Add integration tests for transfer on testnet
-- [ ] Add integration tests for mosaic operations
-- [ ] Add integration tests for aggregate transactions
-- [ ] Document test account credentials for CI/CD
-- [ ] Ensure tests can run with `uv run pytest -m integration`
+- [x] Add integration tests for mosaic operations
+- [x] Add integration tests for aggregate transactions
+- [x] Document test account credentials for CI/CD
+- [x] Ensure tests can run with `uv run pytest -m integration`
 ### Self-Check (Production Logic)
-- [ ] Run transfer on testnet and verify confirmation
-- [ ] Run mosaic creation on testnet and verify confirmation
-- [ ] Run aggregate bonded workflow on testnet
-- [ ] Verify all transactions appear in explorer
+- [x] Run transfer on testnet and verify confirmation
+- [x] Run mosaic creation on testnet and verify confirmation
+- [x] Run aggregate bonded workflow on testnet
+- [x] Verify all transactions appear in explorer
+---
 ---
 ---
 ---

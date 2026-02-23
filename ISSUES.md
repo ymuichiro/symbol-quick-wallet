@@ -16,6 +16,7 @@ The wallet currently doesn't handle network timeouts gracefully. When a node is 
 - [ ] Test with unreachable node URL
 ---
 ---
+---
 
 ---
 
@@ -35,6 +36,7 @@ Users can input invalid amounts (negative, too many decimals, etc.) which may ca
 - [ ] Verify amounts with too many decimals are rejected
 - [ ] Verify amount exceeds balance is rejected
 - [ ] Verify valid amounts are normalized correctly
+---
 ---
 ---
 
@@ -57,6 +59,7 @@ Current test coverage is minimal. Need comprehensive tests for:
 - [ ] Run `uv run pytest -m integration -v` for integration tests
 ---
 ---
+---
 
 ---
 
@@ -75,6 +78,7 @@ The app doesn't detect or handle network state changes. Users should be notified
 - [ ] Verify periodic connection status checks
 ---
 ---
+---
 
 ---
 
@@ -88,6 +92,7 @@ After submitting a transaction, the app should poll for confirmation status and 
 - [ ] Submit transfer on testnet and verify polling starts
 - [ ] Verify UI updates when transaction confirmed
 - [ ] Verify error handling for failed transaction
+---
 ---
 ---
 
@@ -117,6 +122,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [ ] Verify `uv run pytest -q` passes
 ---
 ---
+---
 
 ---
 
@@ -141,6 +147,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Verify no import errors after split
 - [x] Verify all screens load correctly
 - [x] Verify `uv run ty check src/` passes after split
+---
 ---
 ---
 
@@ -169,6 +176,7 @@ Current codebase uses top-level modules, but AGENTS.md specifies feature-based o
 - [x] Verify `uv run ty check src/` passes after refactor
 ---
 ---
+---
 
 ---
 
@@ -192,12 +200,13 @@ Some parts of the codebase lack proper type annotations.
 - [ ] Verify `uv run ty check src/` passes with no errors
 ---
 ---
+---
 
 ---
 
 ## Migrate tests to feature structure
 
-- **Status**: in_progress
+- **Status**: completed
 - **Priority**: medium
 
 Tests are currently flat in `tests/` but should mirror the feature module structure.
@@ -212,12 +221,13 @@ Tests are currently flat in `tests/` but should mirror the feature module struct
 - [x] Create `tests/features/account/` directory
 - [x] Create `tests/features/aggregate/` directory
 - [x] Create `tests/shared/` for shared utility tests
-- [ ] Move remaining flat tests to appropriate feature directories
-- [ ] Add integration tests for each feature
+- [x] Move remaining flat tests to appropriate feature directories
+- [x] Add integration tests for each feature
 ### Self-Check (Production Logic)
-- [ ] Verify `uv run pytest tests/features/ -v` runs all feature tests
-- [ ] Verify `uv run pytest tests/shared/ -v` runs all shared tests
-- [ ] Verify `uv run pytest -m integration` for blockchain tests
+- [x] Verify `uv run pytest tests/features/ -v` runs all feature tests
+- [x] Verify `uv run pytest tests/shared/ -v` runs all shared tests
+- [x] Verify `uv run pytest -m integration` for blockchain tests
+---
 ---
 ---
 
@@ -245,6 +255,7 @@ Need more integration tests against real Symbol testnet nodes.
 - [ ] Run mosaic creation on testnet and verify confirmation
 - [ ] Run aggregate bonded workflow on testnet
 - [ ] Verify all transactions appear in explorer
+---
 ---
 ---
 

@@ -184,7 +184,6 @@ def test_live_send_and_confirm_transaction():
 
     private_key_hex = HARDCODED_TEST_PRIVATE_KEY.strip()
     if not private_key_hex:
-        # Fallback only for emergency/manual override.
         private_key_hex = os.getenv("SYMBOL_TEST_PRIVATE_KEY", "").strip()
     if not private_key_hex:
         pytest.skip(

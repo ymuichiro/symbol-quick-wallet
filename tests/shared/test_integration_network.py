@@ -1,9 +1,3 @@
-"""Integration tests for NetworkClient against real Symbol blockchain nodes.
-
-These tests connect to actual Symbol nodes and verify network functionality.
-No mocks are used - all operations hit real endpoints.
-"""
-
 import pytest
 
 from src.shared.network import (

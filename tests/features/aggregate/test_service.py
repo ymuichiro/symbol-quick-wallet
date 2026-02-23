@@ -392,3 +392,290 @@ class TestBuildCosignaturePayload:
         payload = aggregate_service._build_cosignature_payload(tx_hash)
         payload_dict = json.loads(payload)
         assert "payload" in payload_dict
+
+
+@pytest.mark.integration
+class TestAggregateServiceIntegration:
+    """Integration tests that hit the real testnet.
+
+    Run with: uv run pytest tests/features/aggregate/test_service.py -m integration -v
+    """
+
+    def test_fetch_partial_transactions_real_node(self, mock_wallet):
+        """Test fetching partial transactions from a real testnet node."""
+        import requests
+
+        response = requests.get(f"{mock_wallet.node_url}/node/health", timeout=10)
+        if response.status_code != 200:
+            pytest.skip("Node not available")
+
+        service = AggregateService(mock_wallet)
+        result = service.fetch_partial_transactions()
+
+        assert isinstance(result, list)
+
+    def test_poll_for_transaction_status_real_node(self, mock_wallet):
+        """Test polling transaction status from a real testnet node."""
+        import requests
+
+        response = requests.get(f"{mock_wallet.node_url}/node/health", timeout=10)
+        if response.status_code != 200:
+            pytest.skip("Node not available")
+
+        service = AggregateService(mock_wallet)
+
+        result = service.poll_for_transaction_status(
+            "A000000000000000000000000000000000000000000000000000000000000000",
+            timeout_seconds=10,
+            poll_interval_seconds=2,
+        )
+
+        assert result is not None
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestAggregateTransactionIntegration:
+    """Slow integration tests for aggregate transactions on testnet.
+
+    These tests create real transactions and require funded accounts.
+    Run with: uv run pytest tests/features/aggregate/test_service.py -m "integration and slow" -v
+
+    Note: Set environment variable SYMBOL_TEST_PRIVATE_KEY with a funded testnet account
+    to run these tests. The account needs at least 20 XYM for aggregate and hash lock fees.
+    """
+
+    @pytest.fixture
+    def real_wallet(self):
+        """Create a real wallet from test private key."""
+        import os
+
+        private_key_hex = os.environ.get("SYMBOL_TEST_PRIVATE_KEY")
+        if not private_key_hex:
+            pytest.skip("SYMBOL_TEST_PRIVATE_KEY not set")
+
+        facade = SymbolFacade("testnet")
+        private_key = PrivateKey(private_key_hex)
+        account = facade.create_account(private_key)
+
+        wallet = MagicMock()
+        wallet.facade = facade
+        wallet.network_name = "testnet"
+        wallet.node_url = "http://sym-test-01.opening-line.jp:3000"
+        wallet.address = str(account.address)
+        wallet.private_key = private_key
+        wallet.public_key = str(account.public_key)
+        wallet.get_currency_mosaic_id.return_value = 0x72C0212E67A08BCE
+
+        return wallet
+
+    def test_create_aggregate_complete_transaction(self, real_wallet):
+        """Test creating an aggregate complete transaction (without announcing)."""
+        service = AggregateService(real_wallet)
+
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+
+        embedded = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient,
+            mosaics=[],
+            message="Integration test message",
+        )
+
+        assert embedded is not None
+
+        aggregate = service.create_aggregate_complete([embedded], fee_multiplier=100)
+
+        assert aggregate is not None
+
+        signature = service.sign_transaction(aggregate)
+        assert signature is not None
+
+        tx_hash = service.calculate_transaction_hash(aggregate)
+        assert len(tx_hash) == 64
+
+    def test_create_aggregate_bonded_transaction(self, real_wallet):
+        """Test creating an aggregate bonded transaction (without announcing)."""
+        service = AggregateService(real_wallet)
+
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+
+        embedded = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient,
+            mosaics=[],
+            message="Bonded test message",
+        )
+
+        assert embedded is not None
+
+        aggregate = service.create_aggregate_bonded([embedded], fee_multiplier=100)
+
+        assert aggregate is not None
+
+        hash_lock = service.create_hash_lock(aggregate)
+
+        assert hash_lock is not None
+
+        signature = service.sign_transaction(hash_lock)
+        assert signature is not None
+
+        tx_hash = service.calculate_transaction_hash(hash_lock)
+        assert len(tx_hash) == 64
+
+    def test_create_aggregate_complete_with_mosaic(self, real_wallet):
+        """Test creating an aggregate complete with mosaic transfer (without announcing)."""
+        service = AggregateService(real_wallet)
+
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+        mosaics = [{"mosaic_id": 0x72C0212E67A08BCE, "amount": 1000000}]
+
+        embedded = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient,
+            mosaics=mosaics,
+            message="Test mosaic transfer",
+        )
+
+        assert embedded is not None
+
+        aggregate = service.create_aggregate_complete([embedded], fee_multiplier=100)
+
+        assert aggregate is not None
+
+        fee = service.calculate_fee(aggregate, num_cosignatures=0)
+        assert fee > 0
+
+    def test_create_aggregate_with_multiple_inner_transactions(self, real_wallet):
+        """Test creating an aggregate with multiple inner transactions."""
+        service = AggregateService(real_wallet)
+
+        recipient1 = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+        recipient2 = "TCOMA5VG67TZH4X55HGZOXOFP7S232CYEQMOS7Q"
+
+        embedded1 = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient1,
+            mosaics=[],
+            message="Inner tx 1",
+        )
+
+        embedded2 = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient2,
+            mosaics=[],
+            message="Inner tx 2",
+        )
+
+        aggregate = service.create_aggregate_complete(
+            [embedded1, embedded2], fee_multiplier=100
+        )
+
+        assert aggregate is not None
+
+        signature = service.sign_transaction(aggregate)
+        assert signature is not None
+
+        payload = service.attach_signature(aggregate, signature)
+        assert payload is not None
+        assert len(payload) > 0
+
+    def test_cosignature_creation(self, real_wallet):
+        """Test creating a cosignature for an aggregate transaction."""
+        service = AggregateService(real_wallet)
+
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+
+        embedded = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient,
+            mosaics=[],
+            message="Cosignature test",
+        )
+
+        aggregate = service.create_aggregate_bonded([embedded], fee_multiplier=100)
+
+        cosignature = service.cosign_transaction(aggregate)
+
+        assert cosignature is not None
+        assert cosignature.signer_public_key == real_wallet.public_key
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestAggregateAnnounceIntegration:
+    """Live integration tests that announce transactions to testnet.
+
+    WARNING: These tests spend real XYM from the test account!
+    Run with: uv run pytest tests/features/aggregate/test_service.py -m "integration and slow" -v -k "Announce"
+
+    Requirements:
+    - SYMBOL_TEST_PRIVATE_KEY environment variable with a funded testnet account
+    - Account needs at least 1 XYM for aggregate complete test
+    - Account needs at least 11 XYM for aggregate bonded test (10 XYM for hash lock)
+    """
+
+    @pytest.fixture
+    def real_wallet(self):
+        """Create a real wallet from test private key."""
+        import os
+
+        private_key_hex = os.environ.get("SYMBOL_TEST_PRIVATE_KEY")
+        if not private_key_hex:
+            pytest.skip("SYMBOL_TEST_PRIVATE_KEY not set")
+
+        facade = SymbolFacade("testnet")
+        private_key = PrivateKey(private_key_hex)
+        account = facade.create_account(private_key)
+
+        wallet = MagicMock()
+        wallet.facade = facade
+        wallet.network_name = "testnet"
+        wallet.node_url = "http://sym-test-01.opening-line.jp:3000"
+        wallet.address = str(account.address)
+        wallet.private_key = private_key
+        wallet.public_key = str(account.public_key)
+        wallet.get_currency_mosaic_id.return_value = 0x72C0212E67A08BCE
+
+        return wallet
+
+    def test_node_availability(self, real_wallet):
+        """Test that the testnet node is available."""
+        import requests
+
+        response = requests.get(f"{real_wallet.node_url}/node/health", timeout=10)
+        assert response.status_code == 200
+
+    def test_announce_aggregate_complete_no_mosaic(self, real_wallet):
+        """Test announcing aggregate complete with no mosaic (message only).
+
+        This test costs minimal fees (~0.1 XYM).
+        """
+        import os
+
+        if not os.environ.get("SYMBOL_TEST_PRIVATE_KEY"):
+            pytest.skip("SYMBOL_TEST_PRIVATE_KEY not set")
+
+        service = AggregateService(real_wallet)
+
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+
+        embedded = service.create_embedded_transfer(
+            signer_public_key=str(real_wallet.public_key),
+            recipient_address=recipient,
+            mosaics=[],
+            message="Aggregate complete integration test",
+        )
+
+        result = service.create_and_announce_aggregate_complete(
+            [embedded], fee_multiplier=100
+        )
+
+        assert "hash" in result
+        assert len(result["hash"]) == 64
+
+        status = service.poll_for_transaction_status(
+            result["hash"], timeout_seconds=120, poll_interval_seconds=5
+        )
+
+        assert status.get("group") == "confirmed"

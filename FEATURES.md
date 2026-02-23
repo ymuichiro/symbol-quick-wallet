@@ -195,7 +195,7 @@ Allow users to register and manage namespaces for their accounts and mosaics.
 
 ## Implement aggregate transactions
 
-- **Status**: in_progress
+- **Status**: completed
 - **Priority**: medium
 
 Support aggregate bonded and complete transactions for multi-party workflows.
@@ -206,21 +206,23 @@ Support aggregate bonded and complete transactions for multi-party workflows.
 - Sign aggregate transactions from other initiators
 **Implementation:**
 - Reference `docs/quick_learning_symbol_v3/04_transaction.md#46-アグリゲートトランザクション`
+- Implemented in `src/features/aggregate/`
+- UI accessible via `/aggregate` and `/partials` commands
 **Current Progress:**
 - [x] AggregateService with complete/bonded creation
 - [x] Hash lock transaction support
 - [x] Cosignature creation and attachment
 - [x] Partial transaction fetching and parsing
 - [x] Transaction status polling
-- [ ] UI screens for aggregate workflow
-- [ ] Integration tests on testnet
+- [x] UI screens for aggregate workflow
+- [x] Integration tests on testnet
 ### Self-Check (Production Logic)
-- [ ] Create aggregate complete with inner transfer and announce to testnet
-- [ ] Create hash lock transaction and verify lock confirmation
-- [ ] Create aggregate bonded after hash lock confirmation
-- [ ] Fetch partial transactions from testnet
-- [ ] Cosign a partial transaction and verify announcement
-- [ ] Poll transaction status until confirmed/failed
+- [x] Create aggregate complete with inner transfer and announce to testnet
+- [x] Create hash lock transaction and verify lock confirmation
+- [x] Create aggregate bonded after hash lock confirmation
+- [x] Fetch partial transactions from testnet
+- [x] Cosign a partial transaction and verify announcement
+- [x] Poll transaction status until confirmed/failed
 ---
 ---
 ---

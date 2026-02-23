@@ -54,6 +54,8 @@ from src.features.mosaic.handlers import MosaicHandlersMixin
 from src.features.namespace.handlers import NamespaceHandlersMixin
 from src.features.multisig.handlers import MultisigHandlersMixin
 from src.features.metadata.handlers import MetadataHandlersMixin
+from src.features.lock.handlers import LockHandlersMixin
+from src.features.aggregate.handlers import AggregateHandlersMixin
 from src.shared.transaction_template import TemplateStorage
 from src.shared.transaction_queue import TransactionQueue
 from src.shared.connection_state import (
@@ -86,6 +88,8 @@ class WalletApp(
     NamespaceHandlersMixin,
     MultisigHandlersMixin,
     MetadataHandlersMixin,
+    LockHandlersMixin,
+    AggregateHandlersMixin,
     App,
 ):
     CSS = CSS
@@ -986,6 +990,9 @@ class WalletApp(
                 ("📛 Namespaces", "namespaces"),
                 ("🔐 Multisig Manager", "multisig"),
                 ("📝 Metadata", "metadata"),
+                ("🔒 Lock Transactions", "locks"),
+                ("🔗 Aggregate Transactions", "aggregate"),
+                ("📝 Partial Transactions", "partials"),
                 ("⚙️ Show Config", "show_config"),
                 ("🌐 Network Testnet", "network_testnet"),
                 ("🌐 Network Mainnet", "network_mainnet"),
@@ -1108,6 +1115,12 @@ class WalletApp(
             self.show_multisig_manager()
         elif normalized == "metadata":
             self.show_metadata_menu()
+        elif normalized == "locks":
+            self.show_lock_menu()
+        elif normalized == "aggregate":
+            self.show_aggregate_menu()
+        elif normalized == "partials":
+            self.show_partial_transactions()
         else:
             self.notify(f"Unknown command: /{normalized}", severity="warning")
 

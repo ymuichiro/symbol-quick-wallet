@@ -10,8 +10,8 @@ from typing import Any
 from cryptography.fernet import Fernet
 from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
-import logging
 
+from src.shared.logging import get_logger
 from src.shared.network import (
     NetworkClient,
     NetworkError,
@@ -19,17 +19,7 @@ from src.shared.network import (
     TimeoutConfig,
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(
-            Path.home() / ".config" / "symbol-quick-wallet" / "wallet.log"
-        ),
-        logging.StreamHandler(),
-    ],
-)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

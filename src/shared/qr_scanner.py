@@ -2,13 +2,14 @@
 
 import base64
 import json
-import logging
 import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class QRCodeType(Enum):
@@ -203,7 +204,7 @@ class QRScanner:
 
     @staticmethod
     def _parse_symbol_qr_payload(parsed: dict, raw_data: str) -> ScannedQRData:
-        version = parsed.get("v")
+        parsed.get("v")
         payload = parsed.get("data")
 
         if not payload:

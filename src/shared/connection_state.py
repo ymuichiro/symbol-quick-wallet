@@ -4,7 +4,6 @@ This module provides offline/online state detection and notification
 for network and node connectivity changes.
 """
 
-import logging
 import socket
 import threading
 import time
@@ -12,7 +11,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class ConnectionState(Enum):

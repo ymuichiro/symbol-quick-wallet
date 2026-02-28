@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from textual.widgets import DataTable, Input, Static
@@ -17,12 +16,13 @@ from src.features.address_book.screen import (
     EditAddressScreen,
     EditGroupScreen,
 )
+from src.shared.logging import get_logger
 from src.shared.protocols import WalletProtocol
 
 if TYPE_CHECKING:
     from src.__main__ import WalletApp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AddressBookHandlersMixin:

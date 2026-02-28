@@ -3,6 +3,7 @@
 Supports aggregate complete and bonded transactions for multi-party workflows.
 """
 
+from src.features.aggregate.handlers import AggregateHandlersMixin
 from src.features.aggregate.screen import (
     AggregateBuilderScreen,
     AggregateResultScreen,
@@ -21,6 +22,7 @@ from src.features.aggregate.service import (
 
 __all__ = [
     "AggregateBuilderScreen",
+    "AggregateHandlersMixin",
     "AggregateResultScreen",
     "AggregateService",
     "AggregateStatusScreen",

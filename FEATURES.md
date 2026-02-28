@@ -18,6 +18,7 @@ Allow users to manage multiple accounts/wallets within the same application.
 ---
 ---
 ---
+---
 
 ---
 
@@ -40,6 +41,7 @@ Allow users to prepare multiple transactions and batch submit them.
 ---
 ---
 ---
+---
 
 ---
 
@@ -58,6 +60,7 @@ Allow users to scan QR codes to import addresses for transfers.
 - [ ] Parse JSON QR with address and mosaics
 - [ ] Parse Symbol official QR payload format (v/data base64)
 - [ ] Verify invalid QR returns appropriate error
+---
 ---
 ---
 ---
@@ -84,6 +87,7 @@ Display mosaic metadata and properties when viewing balances.
 ---
 ---
 ---
+---
 
 ---
 
@@ -106,6 +110,7 @@ Organize address book contacts into groups for easier management.
 ---
 ---
 ---
+---
 
 ---
 
@@ -124,6 +129,7 @@ Save frequently used transfer configurations as templates.
 - [ ] Update template and verify changes saved
 - [ ] Delete template and verify removal
 - [ ] Load template and verify all fields populated correctly
+---
 ---
 ---
 ---
@@ -164,6 +170,7 @@ tests/
 ---
 ---
 ---
+---
 
 ---
 
@@ -187,6 +194,7 @@ Allow users to register and manage namespaces for their accounts and mosaics.
 - [x] Resolve namespace to mosaic ID via node API
 - [x] Verify namespace expiration calculation
 - [x] Register root namespace on testnet and verify confirmation
+---
 ---
 ---
 ---
@@ -226,6 +234,7 @@ Support aggregate bonded and complete transactions for multi-party workflows.
 ---
 ---
 ---
+---
 
 ---
 
@@ -250,6 +259,7 @@ Allow users to configure and use multisignature accounts.
 - [x] Initiate transaction from multisig account
 - [x] Cosign multisig transaction from cosigner
 - [x] Verify multisig account info reflects correct thresholds
+---
 ---
 ---
 ---
@@ -279,6 +289,7 @@ Implement WebSocket-based real-time monitoring for incoming transactions.
 ---
 ---
 ---
+---
 
 ---
 
@@ -302,6 +313,7 @@ Allow users to attach metadata to accounts, mosaics, and namespaces.
 - [x] Create aggregate complete transaction with embedded metadata
 - [x] Calculate value delta for updates (XOR encoding)
 - [x] Fetch existing metadata from node API
+---
 ---
 ---
 ---

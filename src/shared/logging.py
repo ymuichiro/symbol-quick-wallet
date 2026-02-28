@@ -312,7 +312,7 @@ class ContextAdapter(logging.LoggerAdapter):
     ):
         super().__init__(logger, context or {})
 
-    def process(
+    def process(  # type: ignore[override]
         self,
         msg: str,
         kwargs: dict[str, Any],

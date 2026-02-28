@@ -1,6 +1,5 @@
 """Network utilities for Symbol Quick Wallet with timeout handling and retry logic."""
 
-import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -9,7 +8,9 @@ from typing import Any, Callable, TypeVar, cast
 import requests
 from requests.exceptions import ConnectionError, HTTPError, Timeout
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -116,7 +117,7 @@ def should_retry(error: Exception, retry_config: RetryConfig) -> bool:
     if isinstance(error, ConnectionError):
         return True
     if isinstance(error, HTTPError):
-        status_code = getattr(error.response, "status_code", None)  # type: ignore[union-attr]
+        status_code = getattr(error.response, "status_code", None)
         if status_code and status_code in retry_config.retryable_status_codes:
             return True
     return False

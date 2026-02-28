@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 from typing import TYPE_CHECKING, Any, cast
 
@@ -14,13 +13,14 @@ from src.screens import (
     MosaicMetadataScreen,
     TransactionResultScreen,
 )
+from src.shared.logging import get_logger
 from src.shared.protocols import WalletProtocol
 from src.transaction import TransactionManager
 
 if TYPE_CHECKING:
     from src.__main__ import WalletApp
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MosaicHandlersMixin:

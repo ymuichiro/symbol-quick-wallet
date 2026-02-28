@@ -6,7 +6,6 @@ Supports aggregate complete and bonded transactions for multi-party workflows.
 from __future__ import annotations
 
 import json
-import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -15,9 +14,10 @@ from typing import Any, Callable, Protocol, cast
 from symbolchain import sc
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
+from src.shared.logging import get_logger
 from src.shared.network import NetworkClient, NetworkError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 HASH_LOCK_DURATION = 480
 HASH_LOCK_AMOUNT = 10_000_000
@@ -117,32 +117,25 @@ class AggregateService:
         message: str = "",
     ) -> sc.EmbeddedTransaction:
         """Create an embedded transfer transaction for use in aggregate."""
-        mosaic_descriptors = []
+        normalized_mosaics = []
         for mosaic in mosaics:
             mosaic_id = mosaic.get("mosaic_id", mosaic.get("id", 0))
             amount = mosaic.get("amount", 0)
-            mosaic_descriptors.append(
-                sc.UnresolvedMosaicDescriptor(
-                    mosaic_id=sc.UnresolvedMosaicId(mosaic_id),
-                    amount=sc.Amount(amount),
-                )
-            )
+            normalized_mosaics.append({"mosaic_id": mosaic_id, "amount": amount})
 
         message_bytes = message.encode("utf-8") if message else b""
         if message_bytes:
             message_bytes = b"\x00" + message_bytes
 
-        descriptor = sc.TransferTransactionV1Descriptor(
-            recipient_address=sc.UnresolvedAddress(
-                self._normalize_address(recipient_address)
-            ),
-            mosaics=mosaic_descriptors,
-            message=message_bytes,
-        )
+        embedded_dict = {
+            "type": "transfer_transaction_v1",
+            "signer_public_key": signer_public_key,
+            "recipient_address": self._normalize_address(recipient_address),
+            "mosaics": normalized_mosaics,
+            "message": message_bytes,
+        }
 
-        return self.facade.create_embedded_transaction_from_descriptor(
-            descriptor, sc.PublicKey(signer_public_key)
-        )
+        return self.facade.transaction_factory.create_embedded(embedded_dict)
 
     def create_aggregate_complete(
         self,
@@ -155,20 +148,19 @@ class AggregateService:
         All required signatures must be collected before announcement.
         """
         transactions_hash = self.facade.hash_embedded_transactions(inner_transactions)
+        deadline_timestamp = self._get_deadline_timestamp(2)
 
-        descriptor = sc.AggregateCompleteTransactionV2Descriptor(
-            transactions_hash=transactions_hash,
-            transactions=inner_transactions,
-        )
+        aggregate_dict = {
+            "type": "aggregate_complete_transaction_v2",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "transactions_hash": transactions_hash,
+            "transactions": inner_transactions,
+        }
 
-        tx = self.facade.create_transaction_from_descriptor(
-            descriptor,
-            sc.PublicKey(str(self.wallet.public_key)),
-            sc.Amount(fee_multiplier),
-            60 * 60 * 2,
-            required_cosigners,
-        )
-
+        tx = self.facade.transaction_factory.create(aggregate_dict)
+        cosignature_size = required_cosigners * self.SIZE_PER_COSIGNATURE
+        tx.fee = sc.Amount((tx.size + cosignature_size) * fee_multiplier)
         return tx
 
     def create_aggregate_bonded(
@@ -181,20 +173,18 @@ class AggregateService:
         This requires a hash lock before announcement and collects cosignatures after.
         """
         transactions_hash = self.facade.hash_embedded_transactions(inner_transactions)
+        deadline_timestamp = self._get_deadline_timestamp(2)
 
-        descriptor = sc.AggregateBondedTransactionV2Descriptor(
-            transactions_hash=transactions_hash,
-            transactions=inner_transactions,
-        )
+        aggregate_dict = {
+            "type": "aggregate_bonded_transaction_v2",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "transactions_hash": transactions_hash,
+            "transactions": inner_transactions,
+        }
 
-        tx = self.facade.create_transaction_from_descriptor(
-            descriptor,
-            sc.PublicKey(str(self.wallet.public_key)),
-            sc.Amount(fee_multiplier),
-            60 * 60 * 2,
-            0,
-        )
-
+        tx = self.facade.transaction_factory.create(aggregate_dict)
+        tx.fee = sc.Amount(tx.size * fee_multiplier)
         return tx
 
     def create_hash_lock(
@@ -212,25 +202,19 @@ class AggregateService:
 
         currency_mosaic_id = self.wallet.get_currency_mosaic_id() or 0x6BED913FA20223F8
 
-        mosaic_descriptor = sc.UnresolvedMosaicDescriptor(
-            mosaic_id=sc.UnresolvedMosaicId(currency_mosaic_id),
-            amount=sc.Amount(lock_amount),
-        )
+        deadline_timestamp = self._get_deadline_timestamp(2)
 
-        descriptor = sc.HashLockTransactionV1Descriptor(
-            mosaic=mosaic_descriptor,
-            duration=sc.BlockDuration(duration),
-            hash=sc.Hash256(aggregate_hash.bytes),
-        )
+        hash_lock_dict = {
+            "type": "hash_lock_transaction_v1",
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "mosaic": {"mosaic_id": currency_mosaic_id, "amount": lock_amount},
+            "duration": duration,
+            "hash": aggregate_hash.bytes,
+        }
 
-        tx = self.facade.create_transaction_from_descriptor(
-            descriptor,
-            sc.PublicKey(str(self.wallet.public_key)),
-            sc.Amount(fee_multiplier),
-            60 * 60 * 2,
-            0,
-        )
-
+        tx = self.facade.transaction_factory.create(hash_lock_dict)
+        tx.fee = sc.Amount(tx.size * fee_multiplier)
         return tx
 
     def sign_transaction(self, transaction: sc.Transaction) -> sc.Signature:
@@ -245,10 +229,10 @@ class AggregateService:
         account = self.facade.create_account(self.wallet.private_key)
         if signature is None:
             signature = account.sign_transaction(transaction)
-        return sc.Cosignature(
-            signer_public_key=self.wallet.public_key,
-            signature=signature,
-        )
+        cosig = sc.Cosignature()
+        cosig.signer_public_key = sc.PublicKey(str(account.public_key))
+        cosig.signature = signature
+        return cosig
 
     def attach_signature(
         self, transaction: sc.Transaction, signature: sc.Signature
@@ -261,7 +245,7 @@ class AggregateService:
     ) -> sc.Transaction:
         """Attach a cosignature to an aggregate transaction."""
         if hasattr(transaction, "cosignatures"):
-            transaction.cosignatures.append(cosignature)
+            transaction.cosignatures.append(cosignature)  # type: ignore[union-attr]
         return transaction
 
     def calculate_transaction_hash(self, transaction: sc.Transaction) -> str:
@@ -413,9 +397,13 @@ class AggregateService:
         for mosaic in mosaics:
             mosaic_id = mosaic.get("id", mosaic.get("mosaicId", 0))
             if isinstance(mosaic_id, str):
-                mosaic_id = (
-                    int(mosaic_id, 16) if mosaic_id.startswith("0x") else int(mosaic_id)
-                )
+                if mosaic_id.startswith("0x"):
+                    mosaic_id = int(mosaic_id, 16)
+                else:
+                    try:
+                        mosaic_id = int(mosaic_id, 16)
+                    except ValueError:
+                        mosaic_id = int(mosaic_id)
             amount = mosaic.get("amount", 0)
             if isinstance(amount, str):
                 amount = int(amount)
@@ -483,7 +471,7 @@ class AggregateService:
             if not result:
                 raise Exception("Partial transaction not found")
 
-            tx_payload = result.get("transaction", {})
+            result.get("transaction", {})
             payload_hex = self._build_cosignature_payload(partial_tx.hash)
 
             announce_result = self._network_client.put(
@@ -502,10 +490,12 @@ class AggregateService:
     def _build_cosignature_payload(self, tx_hash: str) -> str:
         """Build cosignature payload for announcing."""
         account = self.facade.create_account(self.wallet.private_key)
-        cosig = sc.DetachedCosignature(
-            signer_public_key=self.wallet.public_key,
-            signature=account.sign(sc.Hash256(bytes.fromhex(tx_hash))),
-        )
+        cosig = sc.DetachedCosignature()
+        cosig.signer_public_key = sc.PublicKey(str(account.public_key))
+        cosig.parent_hash = sc.Hash256(bytes.fromhex(tx_hash))
+        cosig.signature = self.facade.cosign_transaction_hash(
+            account.key_pair, cosig.parent_hash
+        ).signature
 
         payload = {"payload": cosig.serialize().hex()}
         return json.dumps(payload)

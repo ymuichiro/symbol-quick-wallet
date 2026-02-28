@@ -8,7 +8,6 @@ from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.transaction import TransactionManager
 from src.wallet import Wallet
-from tests.live_test_key import HARDCODED_TEST_PRIVATE_KEY
 
 
 class DummyResponse:

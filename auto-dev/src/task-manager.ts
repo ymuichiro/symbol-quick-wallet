@@ -102,7 +102,7 @@ export function loadTasks(): Task[] {
 }
 
 export function getPendingTasks(): Task[] {
-  return loadTasks().filter(t => t.status === 'pending')
+  return loadTasks().filter(t => t.status === 'pending' || t.status === 'in_progress')
 }
 
 export function selectRandomTask(): Task | null {

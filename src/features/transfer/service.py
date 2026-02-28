@@ -2,21 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+from src.shared.protocols import WalletProtocol as SharedWalletProtocol
 
-
-class WalletProtocol(Protocol):
-    """Protocol defining wallet interface needed for transfers."""
-
-    address: str | None
-    network_name: str
-    node_url: str
-
-    def get_balance(self, address: str | None = None) -> list[dict[str, int]]: ...
-    def get_mosaic_name(self, mosaic_id: int) -> str: ...
+logger = get_logger(__name__)
 
 
 class TransactionManagerProtocol(Protocol):
@@ -35,7 +26,9 @@ class TransferService:
     """Service for handling transfer-related business logic."""
 
     def __init__(
-        self, wallet: WalletProtocol, transaction_manager: TransactionManagerProtocol
+        self,
+        wallet: SharedWalletProtocol,
+        transaction_manager: TransactionManagerProtocol,
     ):
         self.wallet = wallet
         self.transaction_manager = transaction_manager

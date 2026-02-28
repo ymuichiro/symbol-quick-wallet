@@ -2,45 +2,11 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
-from symbolchain.CryptoTypes import PrivateKey
-from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.features.account.service import AccountService
-from src.wallet import Wallet
-from tests.live_test_key import HARDCODED_TEST_PRIVATE_KEY
 
-TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
 TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
-
-
-@pytest.fixture
-def testnet_wallet():
-    wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
-    return wallet
-
-
-@pytest.fixture
-def loaded_testnet_wallet():
-    private_key_hex = HARDCODED_TEST_PRIVATE_KEY.strip()
-    if not private_key_hex:
-        private_key_hex = os.getenv("SYMBOL_TEST_PRIVATE_KEY", "").strip()
-    if not private_key_hex:
-        pytest.skip("No test private key available")
-
-    wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
-    wallet.facade = SymbolFacade("testnet")
-    wallet.private_key = PrivateKey(private_key_hex)
-    account = wallet.facade.create_account(wallet.private_key)
-    wallet.public_key = account.public_key
-    wallet.address = account.address
-    return wallet
 
 
 @pytest.fixture

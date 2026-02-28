@@ -2,32 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+from src.shared.protocols import WalletProtocol
 
-
-class WalletProtocol(Protocol):
-    """Protocol defining wallet interface needed for mosaic operations."""
-
-    address: str | None
-    network_name: str
-    node_url: str
-
-    def get_mosaic_info(self, mosaic_id: int) -> dict[str, Any] | None: ...
-    def get_mosaic_full_info(self, mosaic_id: int) -> dict[str, Any]: ...
-    def get_mosaic_name(self, mosaic_id: int) -> str: ...
-    def get_mosaic_namespace_name(self, mosaic_id: int) -> str | None: ...
-    def get_mosaic_metadata(self, mosaic_id: int) -> list[dict[str, Any]]: ...
-    def create_mosaic_transaction(
-        self,
-        supply: int,
-        divisibility: int = 0,
-        transferable: bool = True,
-        supply_mutable: bool = False,
-        revokable: bool = False,
-    ) -> Any: ...
+logger = get_logger(__name__)
 
 
 class TransactionManagerProtocol(Protocol):

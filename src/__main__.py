@@ -1,5 +1,7 @@
 """Main application entry point for Symbol Quick Wallet."""
 
+# ruff: noqa: E402
+
 import threading
 import traceback
 from pathlib import Path
@@ -541,7 +543,7 @@ class WalletApp(
     ) -> None:
         tx = tx_notification.transaction
         meta = tx_notification.meta
-        tx_hash = meta.get("hash", "unknown")[:16]
+        meta.get("hash", "unknown")[:16]
         recipient = tx.get("recipientAddress", "")
 
         wallet_address = (

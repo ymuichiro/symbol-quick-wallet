@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from src.features.namespace.validators import NamespaceValidator, ValidationResult
+from src.shared.logging import get_logger
 from src.shared.protocols import WalletProtocol
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass

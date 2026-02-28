@@ -151,7 +151,7 @@ class TestCreateAggregateComplete:
         self, aggregate_service, mock_wallet
     ):
         recipient1 = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
-        recipient2 = "TANOTHER5ADDRESS5HERE5XXXXXXXXXXX"
+        recipient2 = "TDWBA6L3CZ6VTZAZPAISL3RWM5VKMHM6J6IM3LY"
         inner1 = aggregate_service.create_embedded_transfer(
             signer_public_key=mock_wallet.public_key,
             recipient_address=recipient1,
@@ -414,8 +414,8 @@ class TestAggregateServiceIntegration:
 
         assert isinstance(result, list)
 
-    def test_poll_for_transaction_status_real_node(self, mock_wallet):
-        """Test polling transaction status from a real testnet node."""
+    def test_poll_for_transaction_status_nonexistent(self, mock_wallet):
+        """Test polling transaction status for non-existent hash raises TimeoutError."""
         import requests
 
         response = requests.get(f"{mock_wallet.node_url}/node/health", timeout=10)
@@ -424,13 +424,12 @@ class TestAggregateServiceIntegration:
 
         service = AggregateService(mock_wallet)
 
-        result = service.poll_for_transaction_status(
-            "A000000000000000000000000000000000000000000000000000000000000000",
-            timeout_seconds=10,
-            poll_interval_seconds=2,
-        )
-
-        assert result is not None
+        with pytest.raises(TimeoutError, match="Transaction status not found"):
+            service.poll_for_transaction_status(
+                "A000000000000000000000000000000000000000000000000000000000000000",
+                timeout_seconds=5,
+                poll_interval_seconds=1,
+            )
 
 
 @pytest.mark.integration

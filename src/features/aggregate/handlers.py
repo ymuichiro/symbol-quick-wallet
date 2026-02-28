@@ -5,7 +5,6 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any
 
-from symbolchain import sc
 
 from src.features.aggregate.service import (
     AggregateService,
@@ -14,7 +13,6 @@ from src.features.aggregate.service import (
 from src.features.aggregate.screen import (
     AggregateBuilderScreen,
     AggregateResultScreen,
-    AggregateStatusScreen,
     CosignConfirmScreen,
     InnerTransactionInputScreen,
     PartialTransactionsScreen,
@@ -227,7 +225,7 @@ class AggregateHandlersMixin:
             if confirmed:
                 self._cosign_partial_transaction(service, partial)
 
-        self.push_screen(CosignConfirmScreen(partial), on_confirm)
+        self.push_screen(CosignConfirmScreen(partial), on_confirm)  # type: ignore[arg-type]
 
     def _cosign_partial_transaction(
         self: "WalletApp", service: AggregateService, partial: PartialTransactionInfo

@@ -1,17 +1,70 @@
-"""Modal screens for the Symbol Quick Wallet application."""
+"""Modal screens for the Symbol Quick Wallet application.
 
-import logging
-from decimal import Decimal, InvalidOperation
+This module provides base classes and shared screens. Feature-specific screens
+are organized in their respective feature modules:
+
+- src.features.transfer.screen: Transfer-related screens
+- src.features.address_book.screen: Address book screens
+- src.features.mosaic.screen: Mosaic management screens
+- src.features.account.screens: Account management screens
+"""
+
 from typing import Callable, Protocol, cast
 
 import qrcode
 from textual.app import ComposeResult
-from textual.containers import Horizontal
-from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Input, Label, Select, Static
+from textual.widgets import Button, DataTable, Input, Label, Static
 
-logger = logging.getLogger(__name__)
+from src.shared.logging import get_logger
+
+from src.features.transfer.screen import (
+    BatchTransactionResultScreen,
+    MosaicInputScreen,
+    SaveTemplateScreen,
+    TemplateListScreen,
+    TemplateSelectorScreen,
+    TransactionConfirmScreen,
+    TransactionQueueScreen,
+    TransactionResultScreen,
+    TransactionStatusScreen,
+)
+from src.features.address_book.screen import (
+    AddAddressScreen,
+    AddressBookScreen,
+    AddressBookSelectorScreen,
+    ContactGroupsScreen,
+    CreateGroupScreen,
+    DeleteGroupConfirmScreen,
+    EditAddressScreen,
+    EditGroupScreen,
+)
+from src.features.mosaic.screen import (
+    CreateMosaicDialogSubmitted,
+    CreateMosaicScreen,
+    HarvestingLinkScreen,
+    HarvestingUnlinkScreen,
+    MosaicMetadataScreen,
+)
+from src.features.account.screens import (
+    AccountManagerScreen,
+    AddAccountScreen,
+    DeleteAccountConfirmScreen,
+    EditAccountScreen,
+    ExportKeyScreen,
+    FirstRunImportWalletScreen,
+    FirstRunSetupScreen,
+    ImportAccountKeyScreen,
+    ImportEncryptedKeyScreen,
+    ImportWalletScreen,
+    NetworkSelectorScreen,
+    PasswordScreen,
+    QRScannerScreen,
+    SetPasswordScreen,
+    SetupPasswordScreen,
+)
+
+logger = get_logger(__name__)
 
 
 class WalletLike(Protocol):
@@ -67,6 +120,8 @@ class CommandSelectorScreen(BaseModalScreen):
             ("/a", "📒 Address Book"),
             ("/history", "📜 History"),
             ("/h", "📜 History"),
+            ("/accounts", "👤 Account Manager"),
+            ("/templates", "📋 Transaction Templates"),
             ("/show_config", "⚙️ Show Config"),
             ("/network_testnet", "🌐 Network: Testnet"),
             ("/network_mainnet", "🌐 Network: Mainnet"),
@@ -166,387 +221,6 @@ class CommandSelectorScreen(BaseModalScreen):
                 focusable_widgets[-1].focus()
 
 
-class AddressBookSelectorScreen(BaseModalScreen):
-    BINDINGS = [("escape", "app.pop_screen", "Close")]
-
-    def __init__(self, addresses):
-        super().__init__()
-        self.addresses = addresses
-
-    def compose(self) -> ComposeResult:
-        yield Label("📒 Select Address")
-        yield DataTable(id="selector-table")
-        yield Button("❌ Cancel", id="cancel-button")
-
-    def on_mount(self) -> None:
-        table = cast(DataTable, self.query_one("#selector-table"))
-        table.add_column("Name")
-        table.add_column("Address")
-        for addr, info in self.addresses.items():
-            table.add_row(info["name"], addr, key=addr)
-
-    def on_data_table_row_selected(self, event):
-        row = event.row_key
-        address = row.value if hasattr(row, "value") else str(row)
-        self.post_message(self.AddressBookSelected(address=address))
-        self.app.pop_screen()
-
-    class AddressBookSelected(Message):
-        def __init__(self, address):
-            super().__init__()
-            self.address = address
-
-
-class AddressBookScreen(BaseModalScreen):
-    def __init__(self, addresses):
-        super().__init__()
-        self.addresses = addresses
-        self._address_keys = []
-
-    def compose(self) -> ComposeResult:
-        yield Label("📒 Address Book")
-        yield DataTable(id="address-book-table")
-        yield Horizontal(
-            Button("📤 Send to Selected", id="send-button", variant="primary"),
-            Button("✏️ Edit", id="edit-button"),
-            Button("🗑️ Delete", id="delete-button"),
-            Button("❌ Close", id="cancel-button"),
-        )
-
-    def on_mount(self) -> None:
-        table = cast(DataTable, self.query_one("#address-book-table"))
-        table.add_column("Name", key="name")
-        table.add_column("Address", key="address")
-        table.add_column("Note", key="note")
-        self._address_keys = list(self.addresses.keys())
-        for addr in self._address_keys:
-            info = self.addresses[addr]
-            table.add_row(info["name"], addr, info["note"], key=addr)
-
-    def _get_selected_address(self) -> str | None:
-        table = cast(DataTable, self.query_one("#address-book-table"))
-        cursor_row = table.cursor_row
-        if cursor_row is None:
-            return None
-
-        try:
-            get_row_at = getattr(table, "get_row_at", None)
-            if callable(get_row_at):
-                selected = get_row_at(cursor_row)
-            else:
-                if 0 <= cursor_row < len(self._address_keys):
-                    selected = table.get_row(self._address_keys[cursor_row])
-                else:
-                    selected = None
-        except Exception:
-            selected = None
-
-        if selected and len(selected) >= 2:
-            return selected[1]
-
-        if 0 <= cursor_row < len(self._address_keys):
-            return self._address_keys[cursor_row]
-        return None
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "send-button":
-            address = self._get_selected_address()
-            if address:
-                self.post_message(self.SendToAddress(address=address))
-                self.app.pop_screen()
-        elif event.button.id == "edit-button":
-            address = self._get_selected_address()
-            if address:
-                info = self.addresses[address]
-                self.post_message(
-                    self.EditAddress(address=address, name=info["name"], note=info["note"])
-                )
-        elif event.button.id == "delete-button":
-            address = self._get_selected_address()
-            if address:
-                self.post_message(self.DeleteAddress(address=address))
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class SendToAddress(Message):
-        def __init__(self, address):
-            super().__init__()
-            self.address = address
-
-    class EditAddress(Message):
-        def __init__(self, address, name, note):
-            super().__init__()
-            self.address = address
-            self.name = name
-            self.note = note
-
-    class DeleteAddress(Message):
-        def __init__(self, address):
-            super().__init__()
-            self.address = address
-
-
-class EditAddressScreen(BaseModalScreen):
-    def __init__(self, address, name, note):
-        super().__init__()
-        self.address_value = address
-        self.name_value = name
-        self.note_value = note
-
-    def compose(self) -> ComposeResult:
-        yield Label("✏️ Edit Address")
-        yield Label(f"Address: {self.address_value}")
-        yield Input(placeholder="Name", id="name-input", value=self.name_value)
-        yield Input(
-            placeholder="Note (optional)", id="note-input", value=self.note_value
-        )
-        yield Horizontal(
-            Button("✓ Save", id="save-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "save-button":
-            name_input = cast(Input, self.query_one("#name-input"))
-            note_input = cast(Input, self.query_one("#note-input"))
-            name = name_input.value
-            note = note_input.value
-            self.post_message(
-                self.EditAddressDialogSubmitted(
-                    address=self.address_value, name=name, note=note
-                )
-            )
-            self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class EditAddressDialogSubmitted(Message):
-        def __init__(self, address, name, note):
-            super().__init__()
-            self.address = address
-            self.name = name
-            self.note = note
-
-
-class AddAddressScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("➕ Add to Address Book")
-        yield Input(placeholder="Name (Label)", id="name-input")
-        yield Input(placeholder="Address", id="address-input")
-        yield Input(placeholder="Note (optional)", id="note-input")
-        yield Horizontal(
-            Button("✓ Save", id="save-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "save-button":
-            name_input = cast(Input, self.query_one("#name-input"))
-            address_input = cast(Input, self.query_one("#address-input"))
-            note_input = cast(Input, self.query_one("#note-input"))
-            name = name_input.value
-            address = address_input.value
-            note = note_input.value
-            self.post_message(
-                self.AddAddressDialogSubmitted(name=name, address=address, note=note)
-            )
-            self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class AddAddressDialogSubmitted(Message):
-        def __init__(self, name, address, note=""):
-            super().__init__()
-            self.name = name
-            self.address = address
-            self.note = note
-
-
-class ImportWalletScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("📥 Import Wallet")
-        yield Input(
-            placeholder="Private Key (hex)", id="private-key-input", password=True
-        )
-        yield Label("⚠️ Never share your private key with anyone!")
-        yield Horizontal(
-            Button("✓ Import", id="import-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "import-button":
-            private_key_input = cast(Input, self.query_one("#private-key-input"))
-            private_key = private_key_input.value
-            if private_key:
-                self.post_message(
-                    self.ImportWalletDialogSubmitted(private_key=private_key)
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class ImportWalletDialogSubmitted(Message):
-        def __init__(self, private_key):
-            super().__init__()
-            self.private_key = private_key
-
-
-class FirstRunImportWalletScreen(ImportWalletScreen):
-    def __init__(self, network):
-        super().__init__()
-        self.network = network
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "import-button":
-            private_key_input = cast(Input, self.query_one("#private-key-input"))
-            private_key = private_key_input.value
-            if private_key:
-                self.post_message(
-                    self.FirstRunImportWalletDialogSubmitted(private_key=private_key)
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class FirstRunImportWalletDialogSubmitted(Message):
-        def __init__(self, private_key):
-            super().__init__()
-            self.private_key = private_key
-
-
-class ExportKeyScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🔐 Export Encrypted Private Key")
-        yield Input(placeholder="Password", id="password-input", password=True)
-        yield Label(
-            "⚠️ The encrypted key will be saved to ~/.symbol-quick-wallet/encrypted_private_key.json"
-        )
-        yield Label(
-            "ℹ️ Make sure to remember your password - there is no recovery option!"
-        )
-        yield Horizontal(
-            Button("✓ Export", id="export-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "export-button":
-            password_input = cast(Input, self.query_one("#password-input"))
-            password = password_input.value
-            if password:
-                self.post_message(self.ExportKeyDialogSubmitted(password=password))
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class ExportKeyDialogSubmitted(Message):
-        def __init__(self, password):
-            super().__init__()
-            self.password = password
-
-
-class ImportEncryptedKeyScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("📥 Import Encrypted Private Key")
-        yield Input(placeholder="File path", id="file-path-input")
-        yield Input(placeholder="Password", id="password-input", password=True)
-        yield Label("ℹ️ Default path: ~/.symbol-quick-wallet/encrypted_private_key.json")
-        yield Horizontal(
-            Button("✓ Import", id="import-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "import-button":
-            file_path_input = cast(Input, self.query_one("#file-path-input"))
-            password_input = cast(Input, self.query_one("#password-input"))
-            file_path = file_path_input.value
-            password = password_input.value
-            if file_path and password:
-                self.post_message(
-                    self.ImportEncryptedKeyDialogSubmitted(
-                        file_path=file_path, password=password
-                    )
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class ImportEncryptedKeyDialogSubmitted(Message):
-        def __init__(self, file_path, password):
-            super().__init__()
-            self.file_path = file_path
-            self.password = password
-
-
-class TransactionConfirmScreen(BaseModalScreen):
-    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "confirm", "Confirm")]
-
-    def __init__(self, recipient, mosaics, message, fee):
-        super().__init__()
-        self.recipient = recipient
-        self.mosaics = mosaics
-        self.message = message
-        self.fee = fee
-        self.wallet: WalletLike | None = None
-
-    def compose(self) -> ComposeResult:
-        yield Label("✅ Confirm Transaction", id="confirm-title")
-        yield Static(f"📤 Recipient: {self.recipient}")
-        yield Label("💰 Mosaics:")
-        yield Static(id="mosaics-list")
-        yield Static(f"⚡ Fee: {self.fee:,.6f} XYM")
-        yield Static(f"💬 Message: {self.message if self.message else '(none)'}")
-        yield Horizontal(
-            Button("✓ Confirm", id="confirm-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_mount(self) -> None:
-        self.wallet = cast(AppWithWalletOps, self.app).wallet
-        self.update_mosaics_list()
-
-    def update_mosaics_list(self):
-        if self.wallet is None:
-            return
-        mosaics_text = ""
-        for mosaic in self.mosaics:
-            amount_units = f"{mosaic['amount'] / 1_000_000:,.6f} units"
-            mosaic_name = self.wallet.get_mosaic_name(mosaic["mosaic_id"])
-            mosaics_text += f"  - {amount_units} ({mosaic_name})\n"
-        mosaics_list_widget = cast(Static, self.query_one("#mosaics-list"))
-        mosaics_list_widget.update(mosaics_text.strip())
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "confirm-button":
-            self.dismiss(
-                {
-                    "recipient": self.recipient,
-                    "mosaics": self.mosaics,
-                    "message": self.message,
-                }
-            )
-        elif event.button.id == "cancel-button":
-            self.dismiss(None)
-
-    def action_confirm(self) -> None:
-        self.dismiss(
-            {
-                "recipient": self.recipient,
-                "mosaics": self.mosaics,
-                "message": self.message,
-            }
-        )
-
-    class TransactionConfirmDialogSubmitted(Message):
-        def __init__(self, recipient, mosaics, message):
-            super().__init__()
-            self.recipient = recipient
-            self.mosaics = mosaics
-            self.message = message
-
-
 class QRCodeScreen(BaseModalScreen):
     def __init__(self, address):
         super().__init__()
@@ -578,846 +252,132 @@ class QRCodeScreen(BaseModalScreen):
             self.app.pop_screen()
 
 
-class CreateMosaicScreen(BaseModalScreen):
-    def __init__(self):
+class LoadingScreen(BaseModalScreen):
+    BINDINGS = []
+
+    def __init__(self, message: str = "Loading...", show_progress: bool = False):
         super().__init__()
-        self.transferable = True
-        self.supply_mutable = False
-        self.revokable = False
+        self._message = message
+        self._show_progress = show_progress
+        self._progress_text = ""
+        self._retry_count = 0
+        self._max_retries = 0
+        self._loading_step = 0
+        self._loading_timer = None
+        self._loading_active = False
 
     def compose(self) -> ComposeResult:
-        yield Label("🎨 Create Mosaic")
-        yield Label("Supply (in micro-units):")
-        yield Input(
-            placeholder="1000000 (1 XYM)",
-            id="supply-input",
-            type="number",
-        )
-        yield Label("Divisibility (0-6):")
-        yield Input(
-            placeholder="0-6",
-            id="divisibility-input",
-            type="number",
-            value="0",
-        )
-        yield Label(f"Transferable: {self.transferable}", id="transferable-label")
-        yield Label(f"Supply Mutable: {self.supply_mutable}", id="mutable-label")
-        yield Label(f"Revokable: {self.revokable}", id="revokable-label")
-        yield Horizontal(
-            Button("Toggle Transferable", id="toggle-transferable"),
-            Button("Toggle Mutable", id="toggle-mutable"),
-            Button("Toggle Revokable", id="toggle-revokable"),
-        )
-        yield Label(
-            "💡 Transferable: Can be sent to others\n"
-            "Supply Mutable: Can change supply later\n"
-            "Revokable: Issuer can revoke mosaics"
-        )
-        yield Horizontal(
-            Button("✓ Create", id="create-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
+        yield Label(self._message, id="loading-message")
+        yield Static("", id="loading-progress")
+        yield Static("", id="loading-spinner")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "toggle-transferable":
-            self.transferable = not self.transferable
-            cast(Label, self.query_one("#transferable-label")).update(
-                f"Transferable: {self.transferable}"
-            )
-        elif event.button.id == "toggle-mutable":
-            self.supply_mutable = not self.supply_mutable
-            cast(Label, self.query_one("#mutable-label")).update(
-                f"Supply Mutable: {self.supply_mutable}"
-            )
-        elif event.button.id == "toggle-revokable":
-            self.revokable = not self.revokable
-            cast(Label, self.query_one("#revokable-label")).update(
-                f"Revokable: {self.revokable}"
-            )
-        elif event.button.id == "create-button":
-            supply_input = cast(Input, self.query_one("#supply-input"))
-            divisibility_input = cast(Input, self.query_one("#divisibility-input"))
-            supply = supply_input.value
-            divisibility = divisibility_input.value
-            if supply and divisibility:
-                self.post_message(
-                    CreateMosaicDialogSubmitted(
-                        supply=int(supply),
-                        divisibility=int(divisibility),
-                        transferable=self.transferable,
-                        supply_mutable=self.supply_mutable,
-                        revokable=self.revokable,
-                    )
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
+    def on_mount(self) -> None:
+        self._start_loading_animation()
 
+    def on_unmount(self) -> None:
+        self._stop_loading_animation()
 
-class CreateMosaicDialogSubmitted(Message):
-    def __init__(self, supply, divisibility, transferable, supply_mutable, revokable):
-        super().__init__()
-        self.supply = supply
-        self.divisibility = divisibility
-        self.transferable = transferable
-        self.supply_mutable = supply_mutable
-        self.revokable = revokable
+    def _start_loading_animation(self) -> None:
+        self._loading_active = True
+        self._loading_step = 0
+        frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-
-class SetupPasswordSubmitted(Message):
-    def __init__(self, password):
-        super().__init__()
-        self.password = password
-
-
-class SetupPasswordScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🔐 Set Password")
-        yield Label("Enter a password for your new wallet:")
-        yield Input(placeholder="Password", id="password-input", password=True)
-        yield Label(
-            "⚠️ Make sure to remember your password. There is no recovery option!",
-            classes="warning",
-        )
-        yield Horizontal(
-            Button("✓ Next", id="next-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "next-button":
-            password_input = cast(Input, self.query_one("#password-input"))
-            password = password_input.value
-            logger.info("[SetupPasswordScreen] Next button pressed")
-            self.post_message(SetupPasswordSubmitted(password=password))
-            logger.info("[SetupPasswordScreen] SetupPasswordSubmitted message sent")
-            self.app.pop_screen()
-            logger.info("[SetupPasswordScreen] Screen popped")
-        elif event.button.id == "cancel-button":
-            logger.info("[SetupPasswordScreen] Cancel button pressed")
-            self.app.pop_screen()
-
-
-class PasswordScreen(BaseModalScreen):
-    def __init__(
-        self,
-        title: str = "Password",
-        confirm_button_text: str = "Confirm",
-        screen_type: str = "unlock",
-    ):
-        super().__init__()
-        self.dialog_title = title
-        self.confirm_button_text = confirm_button_text
-        self.screen_type = screen_type
-
-    BINDINGS = [
-        ("escape", "action_escape", "Escape"),
-        ("tab", "action_focus_next", "Next"),
-        ("shift+tab", "action_focus_previous", "Previous"),
-        ("enter", "action_confirm", "Confirm"),
-    ]
-
-    def action_escape(self) -> None:
-        import logging
-
-        logger = logging.getLogger("src.screens")
-        logger.info(
-            f"[PasswordScreen.action_escape] Escape pressed, screen_type={self.screen_type}"
-        )
-        if self.screen_type == "unlock":
-            self.notify(
-                "Password required to access wallet. Exiting application.",
-                severity="warning",
-            )
-            logger.info("[PasswordScreen.action_escape] Exiting application")
-            self.app.exit()
-        else:
-            logger.info("[PasswordScreen.action_escape] Popping screen")
-            self.app.pop_screen()
-
-    def action_confirm(self) -> None:
-        import logging
-
-        logger = logging.getLogger("src.screens")
-        logger.info(
-            "[PasswordScreen.action_confirm] Enter pressed, confirming password"
-        )
-
-        password_input = cast(Input, self.query_one("#password-input"))
-        password = password_input.value
-        if not password:
-            logger.warning("[PasswordScreen.action_confirm] Empty password, ignoring")
-            return
-
-        if self.screen_type == "unlock":
-            logger.info("[PasswordScreen.action_confirm] Calling app to unlock wallet")
-            try:
-                success = cast(AppWithWalletOps, self.app).unlock_wallet(password, self)
-                logger.info(
-                    f"[PasswordScreen.action_confirm] app.unlock_wallet() returned: {success}"
-                )
-                if success:
-                    logger.info(
-                        "[PasswordScreen.action_confirm] Unlock successful, popping screen"
-                    )
-                    self.app.pop_screen()
-                else:
-                    logger.info(
-                        "[PasswordScreen.action_confirm] Unlock failed, clearing password input"
-                    )
-                    password_input = cast(Input, self.query_one("#password-input"))
-                    password_input.value = ""
-            except Exception as e:
-                logger.error(
-                    f"[PasswordScreen.action_confirm] ERROR: {e}", exc_info=True
-                )
-                self.notify(f"Error: {str(e)}", severity="error")
-        else:
-            logger.info(
-                "[PasswordScreen.action_confirm] Posting message for other screen types"
-            )
-            try:
-                self.app.post_message(
-                    self.PasswordDialogSubmitted(
-                        password=password, screen_type=self.screen_type, screen=self
-                    )
-                )
-                logger.info(
-                    "[PasswordScreen.action_confirm] Message posted successfully"
-                )
-                self.app.pop_screen()
-                logger.info("[PasswordScreen.action_confirm] Screen popped")
-            except Exception as e:
-                logger.error(
-                    f"[PasswordScreen.action_confirm] ERROR: {e}", exc_info=True
-                )
-                self.notify(f"Error: {str(e)}", severity="error")
-
-    def compose(self) -> ComposeResult:
-        import logging
-
-        logger = logging.getLogger("src.screens")
-        logger.info("")
-        logger.info("=" * 80)
-        logger.info(
-            "[PasswordScreen.compose] ========== PASSWORD SCREEN COMPOSING =========="
-        )
-        logger.info("=" * 80)
-        logger.info(f"[PasswordScreen.compose] Screen type: {self.screen_type}")
-        logger.info(f"[PasswordScreen.compose] Title: {self.dialog_title}")
-        logger.info(
-            f"[PasswordScreen.compose] Confirm button text: {self.confirm_button_text}"
-        )
-        logger.info(f"[PasswordScreen.compose] App type: {type(self.app)}")
-        logger.info(
-            f"[PasswordScreen.compose] Screen stack size: {len(self.app.screen_stack)}"
-        )
-
-        logger.info("[PasswordScreen.compose] Creating UI components")
-        yield Label(self.dialog_title, id="password-title")
-        logger.info("[PasswordScreen.compose] Password title label created")
-
-        yield Input(
-            placeholder="Password",
-            id="password-input",
-            password=True,
-        )
-        logger.info("[PasswordScreen.compose] Password input created")
-        if self.confirm_button_text != "Confirm":
-            logger.info("[PasswordScreen.compose] Creating hint label")
-            yield Label("(Leave empty for no password)", classes="hint")
-            logger.info("[PasswordScreen.compose] Hint label created")
-
-        logger.info("[PasswordScreen.compose] Creating buttons")
-        yield Horizontal(
-            Button(
-                f"✓ {self.confirm_button_text}", id="confirm-button", variant="primary"
-            ),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-        logger.info("[PasswordScreen.compose] Buttons created")
-
-        logger.info(
-            "[PasswordScreen.compose] ========== PASSWORD SCREEN COMPOSED =========="
-        )
-        logger.info("=" * 80)
-        logger.info("")
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Handle Enter key press in password input."""
-        if event.input.id == "password-input":
-            import logging
-
-            logger = logging.getLogger("src.screens")
-            logger.info("")
-            logger.info("=" * 80)
-            logger.info(
-                "[PasswordScreen.on_input_submitted] ========== INPUT SUBMITTED (ENTER KEY) =========="
-            )
-            logger.info("=" * 80)
-            logger.info(
-                f"[PasswordScreen.on_input_submitted] Input ID: {event.input.id}"
-            )
-            logger.info(
-                f"[PasswordScreen.on_input_submitted] Screen type: {self.screen_type}"
-            )
-            logger.info(
-                f"[PasswordScreen.on_input_submitted] Password length: {len(event.value) if event.value else 0}"
-            )
-            logger.info(
-                "[PasswordScreen.on_input_submitted] Simulating confirm button press"
-            )
-
-            password = event.value
-            if not password:
-                logger.warning(
-                    "[PasswordScreen.on_input_submitted] Empty password, ignoring"
-                )
+        def tick() -> None:
+            if not self._loading_active:
                 return
-
-            if self.screen_type == "unlock":
-                logger.info(
-                    "[PasswordScreen.on_input_submitted] Calling app to unlock wallet"
-                )
-                try:
-                    success = cast(AppWithWalletOps, self.app).unlock_wallet(password, self)
-                    logger.info(
-                        f"[PasswordScreen.on_input_submitted] app.unlock_wallet() returned: {success}"
-                    )
-                    if success:
-                        logger.info(
-                            "[PasswordScreen.on_input_submitted] Unlock successful, popping screen"
-                        )
-                        self.app.pop_screen()
-                        logger.info(
-                            "[PasswordScreen.on_input_submitted] Screen popped successfully"
-                        )
-                    else:
-                        logger.info(
-                            "[PasswordScreen.on_input_submitted] Unlock failed, screen remains open"
-                        )
-                        # Clear password input for retry
-                        event.input.value = ""
-                except Exception as e:
-                    logger.error(
-                        f"[PasswordScreen.on_input_submitted] ERROR: {e}", exc_info=True
-                    )
-                    self.notify(f"Error: {str(e)}", severity="error")
-            else:
-                logger.info(
-                    "[PasswordScreen.on_input_submitted] Posting message for other screen types"
-                )
-                try:
-                    self.app.post_message(
-                        self.PasswordDialogSubmitted(
-                            password=password, screen_type=self.screen_type, screen=self
-                        )
-                    )
-                    logger.info(
-                        "[PasswordScreen.on_input_submitted] Message posted successfully"
-                    )
-                    self.app.pop_screen()
-                    logger.info("[PasswordScreen.on_input_submitted] Screen popped")
-                except Exception as e:
-                    logger.error(
-                        f"[PasswordScreen.on_input_submitted] ERROR: {e}", exc_info=True
-                    )
-                    self.notify(f"Error: {str(e)}", severity="error")
-
-            logger.info("")
-            logger.info(
-                "[PasswordScreen.on_input_submitted] ========== INPUT SUBMITTED COMPLETED =========="
-            )
-            logger.info("")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        import logging
-
-        logger = logging.getLogger("src.screens")
-        logger.info("")
-        logger.info("=" * 80)
-        logger.info(
-            "[PasswordScreen.on_button_pressed] ========== BUTTON PRESSED =========="
-        )
-        logger.info("=" * 80)
-        logger.info(f"[PasswordScreen.on_button_pressed] Button ID: {event.button.id}")
-        logger.info(
-            f"[PasswordScreen.on_button_pressed] Screen type: {self.screen_type}"
-        )
-        logger.info(f"[PasswordScreen.on_button_pressed] App type: {type(self.app)}")
-        logger.info(
-            f"[PasswordScreen.on_button_pressed] Screen stack size: {len(self.app.screen_stack)}"
-        )
-        logger.info(
-            f"[PasswordScreen.on_button_pressed] Current screen: {type(self.app.screen)}"
-        )
-
-        if event.button.id == "confirm-button":
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== CONFIRM BUTTON =========="
-            )
-            logger.info(
-                "[PasswordScreen.on_button_pressed] Getting password from input"
-            )
-            password_input = cast(Input, self.query_one("#password-input"))
-            password = password_input.value
-            if not password:
-                logger.warning("[PasswordScreen.on_button_pressed] Empty password, ignoring")
-                return
-            logger.info(
-                f"[PasswordScreen.on_button_pressed] Password length: {len(password) if password else 0}"
-            )
-            logger.info(
-                f"[PasswordScreen.on_button_pressed] Password provided: {password is not None and len(password) > 0}"
-            )
-
-            logger.info("")
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== CREATING MESSAGE =========="
-            )
-            logger.info(
-                "[PasswordScreen.on_button_pressed] Creating PasswordDialogSubmitted"
-            )
-            logger.info(
-                f"[PasswordScreen.on_button_pressed] Message password length: {len(password) if password else 0}"
-            )
-            logger.info(
-                f"[PasswordScreen.on_button_pressed] Message screen_type: {self.screen_type}"
-            )
-
-            logger.info("")
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== POSTING MESSAGE TO APP =========="
-            )
-            logger.info(
-                "[PasswordScreen.on_button_pressed] About to call app.post_message()"
-            )
-            logger.info(
-                f"[PasswordScreen.on_button_pressed] App has on_password_dialog_submitted: {hasattr(self.app, 'on_password_dialog_submitted')}"
-            )
-
+            self._loading_step = (self._loading_step + 1) % len(frames)
+            spinner = frames[self._loading_step]
             try:
-                logger.info("")
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] ========== DIRECT PASSWORD VERIFICATION =========="
-                )
-                logger.info("")
+                spinner_widget = cast(Static, self.query_one("#loading-spinner"))
+                spinner_widget.update(f"[cyan]{spinner}[/cyan]")
+            except Exception:
+                pass
 
-                if self.screen_type == "unlock":
-                    logger.info(
-                        "[PasswordScreen.on_button_pressed] Calling app to unlock wallet"
-                    )
-                    success = cast(AppWithWalletOps, self.app).unlock_wallet(password, self)
-                    logger.info(
-                        f"[PasswordScreen.on_button_pressed] app.unlock_wallet() returned: {success}"
-                    )
-                    if success:
-                        logger.info(
-                            "[PasswordScreen.on_button_pressed] Unlock successful, popping screen"
-                        )
-                        self.app.pop_screen()
-                        logger.info("[PasswordScreen.on_button_pressed] Screen popped")
-                    else:
-                        logger.info(
-                            "[PasswordScreen.on_button_pressed] Unlock failed, screen remains open"
-                        )
-                else:
-                    logger.info(
-                        "[PasswordScreen.on_button_pressed] Posting message for other screen types"
-                    )
-                    self.app.post_message(
-                        self.PasswordDialogSubmitted(
-                            password=password, screen_type=self.screen_type, screen=self
-                        )
-                    )
-                    logger.info(
-                        "[PasswordScreen.on_button_pressed] Message posted successfully"
-                    )
-                    self.app.pop_screen()
-                    logger.info("[PasswordScreen.on_button_pressed] Screen popped")
+        self._loading_timer = self.set_interval(0.08, tick)
 
-                logger.info("")
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] ========== DIRECT PASSWORD VERIFICATION COMPLETED =========="
-                )
-                logger.info("")
-            except Exception as e:
-                logger.error(
-                    f"[PasswordScreen.on_button_pressed] ERROR: {e}",
-                    exc_info=True,
-                )
-                logger.error("")
-                self.notify(f"Error: {str(e)}", severity="error")
+    def _stop_loading_animation(self) -> None:
+        self._loading_active = False
+        if self._loading_timer:
+            try:
+                self._loading_timer.stop()
+            except Exception:
+                pass
+            self._loading_timer = None
 
-            logger.info("")
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== CONFIRM BUTTON HANDLING COMPLETED =========="
-            )
-            logger.info("")
-
-        elif event.button.id == "cancel-button":
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== CANCEL BUTTON =========="
-            )
-            logger.info("[PasswordScreen.on_button_pressed] Cancel button pressed")
-
-            if self.screen_type == "unlock":
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] Screen type is unlock, showing notification and exiting"
-                )
-                self.notify(
-                    "Password required to access wallet. Exiting application.",
-                    severity="warning",
-                )
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] About to call app.exit()"
-                )
-                dump_screen_stack = getattr(self.app, "dump_screen_stack", None)
-                if callable(dump_screen_stack):
-                    dump_screen_stack(
-                        "PasswordScreen.on_button_pressed CANCEL BEFORE app.exit()"
-                    )
-                self.app.exit()
-                logger.info("[PasswordScreen.on_button_pressed] app.exit() called")
-            else:
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] Screen type is not unlock, just popping screen"
-                )
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] About to call app.pop_screen()"
-                )
-                self.app.pop_screen()
-                logger.info(
-                    "[PasswordScreen.on_button_pressed] app.pop_screen() called"
-                )
-
-            logger.info(
-                "[PasswordScreen.on_button_pressed] ========== BUTTON HANDLING COMPLETED =========="
-            )
-            logger.info("=" * 80)
-            logger.info("")
-
-    class PasswordDialogSubmitted(Message):
-        def __init__(self, password, screen_type="unlock", screen=None):
-            super().__init__()
-            self.password = password
-            self.screen_type = screen_type
-            self.screen = screen
-
-
-class NetworkSelectorScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🌐 Select Network")
-        yield Horizontal(
-            Button("Testnet", id="testnet-button", variant="primary"),
-            Button("Mainnet", id="mainnet-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "testnet-button":
-            self.post_message(self.NetworkSelected(network="testnet"))
-        elif event.button.id == "mainnet-button":
-            self.post_message(self.NetworkSelected(network="mainnet"))
-
-    class NetworkSelected(Message):
-        def __init__(self, network):
-            super().__init__()
-            self.network = network
-
-
-class FirstRunSetupScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🚀 Wallet Setup")
-        yield Static("Choose an option:")
-        yield Horizontal(
-            Button("✨ Create New Wallet", id="create-button", variant="primary"),
-            Button("🔑 Import Existing Wallet", id="import-button"),
-            Button("❌ Cancel", id="cancel-button"),
-        )
-        yield Static(
-            "💡 New wallet will be created with the password you just entered.",
-            classes="hint",
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "create-button":
-            self.post_message(self.SetupAction(action="create"))
-        elif event.button.id == "import-button":
-            self.post_message(self.SetupAction(action="import"))
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class SetupAction(Message):
-        def __init__(self, action):
-            super().__init__()
-            self.action = action
-
-
-class SetPasswordScreen(BaseModalScreen):
-    def __init__(self, network, action):
-        super().__init__()
-        self.network = network
-        self.action = action  # "create" or "import"
-
-    def compose(self) -> ComposeResult:
-        yield Label(f"🔐 Set Password - {self.network.upper()}")
-        yield Label(f"Action: {self.action.capitalize()} Wallet")
-        yield Label("Password (required):")
-        yield Input(placeholder="Enter password", id="password-input", password=True)
-        yield Label("Confirm Password:")
-        yield Input(
-            placeholder="Confirm password", id="confirm-password-input", password=True
-        )
-        yield Horizontal(
-            Button("✓ Set Password", id="set-password-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-        yield Static(
-            "⚠️ Make sure to remember your password. There is no recovery option!",
-            classes="warning",
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "set-password-button":
-            password_input = cast(Input, self.query_one("#password-input"))
-            confirm_password_input = cast(
-                Input, self.query_one("#confirm-password-input")
-            )
-            password = password_input.value
-            confirm_password = confirm_password_input.value
-            if not password:
-                self.notify("Password cannot be empty", severity="error")
-            elif password != confirm_password:
-                self.notify("Passwords do not match", severity="error")
-            else:
-                self.post_message(
-                    self.SetPasswordDialogSubmitted(
-                        password=password, action=self.action
-                    )
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class SetPasswordDialogSubmitted(Message):
-        def __init__(self, password, action):
-            super().__init__()
-            self.password = password
-            self.action = action  # "create" or "import"
-
-
-class MosaicInputScreen(BaseModalScreen):
-    BINDINGS = BaseModalScreen.BINDINGS + [("enter", "confirm", "Confirm")]
-
-    def __init__(self, owned_mosaics):
-        super().__init__()
-        self.owned_mosaics = owned_mosaics
-
-    def compose(self) -> ComposeResult:
-        yield Label("➕ Add Mosaic to Transaction")
-
-        mosaic_options = [(m["name"], hex(m["id"])) for m in self.owned_mosaics]
-        yield Label("Select Mosaic:")
-        yield Select(
-            mosaic_options,
-            id="mosaic-select",
-            prompt="Select a mosaic...",
-            allow_blank=False,
-        )
-
-        yield Label("Amount (human units):")
-        yield Input(
-            placeholder="e.g. 1.25",
-            id="amount-input",
-            type="text",
-        )
-
-        yield Label("💡 Your owned mosaics:")
-        for mosaic in self.owned_mosaics:
-            divisibility = int(mosaic.get("divisibility", 0))
-            owned_human = mosaic.get("human_amount")
-            if owned_human is None:
-                owned_human = mosaic["amount"] / (10**divisibility)
-            yield Static(
-                f"  - {mosaic['name']}: {owned_human:,.{divisibility}f} units "
-                f"(divisibility: {divisibility})"
-            )
-
-        yield Horizontal(
-            Button("✓ Add", id="add-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def action_confirm(self) -> None:
-        self._submit_selected_mosaic()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "amount-input":
-            self._submit_selected_mosaic()
-
-    def _submit_selected_mosaic(self) -> None:
-        mosaic_select = cast(Select, self.query_one("#mosaic-select"))
-        amount_input = cast(Input, self.query_one("#amount-input"))
-
-        if not (mosaic_select.value and amount_input.value):
-            self.notify("Please fill all fields", severity="error")
-            return
-
-        if not isinstance(mosaic_select.value, str):
-            self.notify("Please select a mosaic", severity="error")
-            return
-
+    def update_message(self, message: str) -> None:
+        self._message = message
         try:
-            mosaic_id = int(mosaic_select.value, 16)
-        except (TypeError, ValueError):
-            self.notify("Please select a valid mosaic", severity="error")
-            return
+            label = cast(Label, self.query_one("#loading-message"))
+            label.update(message)
+        except Exception:
+            pass
 
-        selected_mosaic = None
-        for mosaic in self.owned_mosaics:
-            if mosaic["id"] == mosaic_id:
-                selected_mosaic = mosaic
-                break
-
-        if not selected_mosaic:
-            self.notify("Selected mosaic was not found", severity="error")
-            return
-
-        divisibility = int(selected_mosaic.get("divisibility", 0))
-        raw_amount = amount_input.value.strip().replace(",", "")
-
+    def update_progress(self, text: str) -> None:
+        self._progress_text = text
         try:
-            amount_human = Decimal(raw_amount)
-        except (InvalidOperation, ValueError):
-            self.notify("Amount must be a valid number", severity="error")
-            return
+            progress = cast(Static, self.query_one("#loading-progress"))
+            progress.update(f"[dim]{text}[/dim]")
+        except Exception:
+            pass
 
-        if amount_human <= 0:
-            self.notify("Amount must be greater than zero", severity="error")
-            return
+    def set_retry_status(self, attempt: int, max_retries: int, delay: float) -> None:
+        self._retry_count = attempt
+        self._max_retries = max_retries
+        self.update_progress(f"Retry {attempt}/{max_retries} in {delay:.1f}s...")
 
-        exponent = amount_human.as_tuple().exponent
-        if not isinstance(exponent, int):
-            self.notify("Unsupported numeric format", severity="error")
-            return
-        decimal_places = max(0, -exponent)
-        if decimal_places > divisibility:
-            self.notify(
-                f"Too many decimals. Max {divisibility} decimal places allowed.",
-                severity="error",
-            )
-            return
-
+    def show_error(self, error_message: str) -> None:
+        self._stop_loading_animation()
         try:
-            scale = Decimal(10) ** divisibility
-            amount = int(amount_human * scale)
-        except (TypeError, ValueError):
-            self.notify("Failed to convert amount", severity="error")
-            return
-
-        if not selected_mosaic or amount <= 0 or amount > selected_mosaic["amount"]:
-            self.notify("Invalid amount or insufficient balance", severity="error")
-            return
-
-        self.dismiss({"mosaic_id": mosaic_id, "amount": amount})
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "add-button":
-            self._submit_selected_mosaic()
-        elif event.button.id == "cancel-button":
-            self.dismiss(None)
-
-    class MosaicAdded(Message):
-        def __init__(self, mosaic_id, amount):
-            super().__init__()
-            self.mosaic_id = mosaic_id
-            self.amount = amount
+            spinner = cast(Static, self.query_one("#loading-spinner"))
+            spinner.update("[red]✗[/red]")
+            label = cast(Label, self.query_one("#loading-message"))
+            label.update(f"[red]{error_message}[/red]")
+        except Exception:
+            pass
 
 
-class HarvestingLinkScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🔗 Link Harvesting Account")
-        yield Label(
-            "Enter the public key of the node you want to delegate harvesting to:"
-        )
-        yield Input(
-            placeholder="Remote Public Key",
-            id="remote-public-key-input",
-        )
-        yield Label(
-            "⚠️ Make sure you trust this node. Once linked, the node can harvest on your behalf."
-        )
-        yield Horizontal(
-            Button("✓ Link", id="link-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "link-button":
-            remote_public_key_input = cast(
-                Input, self.query_one("#remote-public-key-input")
-            )
-            remote_public_key = remote_public_key_input.value
-            if remote_public_key:
-                self.post_message(
-                    self.HarvestingLinkDialogSubmitted(
-                        remote_public_key=remote_public_key
-                    )
-                )
-                self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class HarvestingLinkDialogSubmitted(Message):
-        def __init__(self, remote_public_key):
-            super().__init__()
-            self.remote_public_key = remote_public_key
-
-
-class HarvestingUnlinkScreen(BaseModalScreen):
-    def compose(self) -> ComposeResult:
-        yield Label("🔗 Unlink Harvesting Account")
-        yield Label("Are you sure you want to unlink your harvesting account?")
-        yield Label("⚠️ You will stop harvesting and may lose rewards.")
-        yield Horizontal(
-            Button("✓ Unlink", id="unlink-button", variant="primary"),
-            Button("✗ Cancel", id="cancel-button"),
-        )
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "unlink-button":
-            self.post_message(self.HarvestingUnlinkDialogSubmitted())
-            self.app.pop_screen()
-        elif event.button.id == "cancel-button":
-            self.app.pop_screen()
-
-    class HarvestingUnlinkDialogSubmitted(Message):
-        pass
-
-
-class TransactionResultScreen(BaseModalScreen):
-    def __init__(self, tx_hash, network="testnet"):
-        super().__init__()
-        self.tx_hash = tx_hash
-        self.network = network
-
-    def compose(self) -> ComposeResult:
-        yield Label("✅ Transaction Sent!", id="result-title")
-        yield Label("Transaction Hash:")
-        yield Static(self.tx_hash, id="tx-hash-display")
-        if self.network == "testnet":
-            explorer_url = f"https://testnet.symbol.fyi/transactions/{self.tx_hash}"
-        else:
-            explorer_url = f"https://symbol.fyi/transactions/{self.tx_hash}"
-        yield Label(f"Explorer: {explorer_url}")
-        yield Button("📋 Copy Hash", id="copy-hash-button", variant="primary")
-        yield Button("❌ Close", id="close-button")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "copy-hash-button":
-            import pyperclip
-
-            pyperclip.copy(self.tx_hash)
-            self.notify("Transaction hash copied to clipboard!", severity="information")
-        elif event.button.id == "close-button":
-            self.app.pop_screen()
+__all__ = [
+    "BaseModalScreen",
+    "WalletLike",
+    "AppWithWalletOps",
+    "CommandSelectorScreen",
+    "QRCodeScreen",
+    "LoadingScreen",
+    "BatchTransactionResultScreen",
+    "MosaicInputScreen",
+    "SaveTemplateScreen",
+    "TemplateListScreen",
+    "TemplateSelectorScreen",
+    "TransactionConfirmScreen",
+    "TransactionQueueScreen",
+    "TransactionResultScreen",
+    "TransactionStatusScreen",
+    "AddAddressScreen",
+    "AddressBookScreen",
+    "AddressBookSelectorScreen",
+    "ContactGroupsScreen",
+    "CreateGroupScreen",
+    "DeleteGroupConfirmScreen",
+    "EditAddressScreen",
+    "EditGroupScreen",
+    "CreateMosaicDialogSubmitted",
+    "CreateMosaicScreen",
+    "HarvestingLinkScreen",
+    "HarvestingUnlinkScreen",
+    "MosaicMetadataScreen",
+    "AccountManagerScreen",
+    "AddAccountScreen",
+    "DeleteAccountConfirmScreen",
+    "EditAccountScreen",
+    "ExportKeyScreen",
+    "FirstRunImportWalletScreen",
+    "FirstRunSetupScreen",
+    "ImportAccountKeyScreen",
+    "ImportEncryptedKeyScreen",
+    "ImportWalletScreen",
+    "NetworkSelectorScreen",
+    "PasswordScreen",
+    "QRScannerScreen",
+    "SetPasswordScreen",
+    "SetupPasswordScreen",
+]

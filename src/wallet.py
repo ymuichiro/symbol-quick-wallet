@@ -2,33 +2,73 @@ import json
 import base64
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import requests
 from cryptography.fernet import Fernet
 from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
-import logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(
-            Path.home() / ".config" / "symbol-quick-wallet" / "wallet.log"
-        ),
-        logging.StreamHandler(),
-    ],
+from src.shared.logging import get_logger
+from src.shared.network import (
+    NetworkClient,
+    NetworkError,
+    RetryConfig,
+    TimeoutConfig,
 )
-logger = logging.getLogger(__name__)
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class WalletConfig:
+    timeout_config: TimeoutConfig | None = None
+    retry_config: RetryConfig | None = None
+
+    def __post_init__(self):
+        if self.timeout_config is None:
+            self.timeout_config = TimeoutConfig()
+        if self.retry_config is None:
+            self.retry_config = RetryConfig()
+
+
+@dataclass
+class AccountInfo:
+    address: str
+    public_key: str
+    encrypted_private_key: str
+    label: str = ""
+    address_book_shared: bool = True
+
+    def to_dict(self) -> dict:
+        return {
+            "address": self.address,
+            "public_key": self.public_key,
+            "encrypted_private_key": self.encrypted_private_key,
+            "label": self.label,
+            "address_book_shared": self.address_book_shared,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AccountInfo":
+        return cls(
+            address=data.get("address", ""),
+            public_key=data.get("public_key", ""),
+            encrypted_private_key=data.get("encrypted_private_key", ""),
+            label=data.get("label", ""),
+            address_book_shared=data.get("address_book_shared", True),
+        )
+
+
+MULTI_ACCOUNT_VERSION = 1
 
 
 class Wallet:
-    XYM_MOSAIC_ID = 0x6BED913FA20223F8
-    TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
-    XYM_DIVISIBILITY = 6
+    XYM_MOSAIC_ID: int = 0x6BED913FA20223F8
+    TESTNET_XYM_MOSAIC_ID: int = 0x72C0212E67A08BCE
+    XYM_DIVISIBILITY: int = 6
 
     @classmethod
     def _resolve_storage_dir(cls, storage_dir: str | Path | None = None) -> Path:
@@ -55,14 +95,19 @@ class Wallet:
             return legacy_dir
         return config_dir
 
-    def __init__(self, network_name="testnet", password=None, storage_dir=None):
+    def __init__(
+        self, network_name="testnet", password=None, storage_dir=None, config=None
+    ):
         self.network_name = network_name
         self.facade = SymbolFacade(network_name)
         wallet_dir = self._resolve_storage_dir(storage_dir)
         wallet_dir.mkdir(parents=True, exist_ok=True)
         self.wallet_dir = wallet_dir
         self.wallet_file = self.wallet_dir / "wallet.json"
+        self.accounts_file = self.wallet_dir / "accounts.json"
         self.address_book_file = self.wallet_dir / "address_book.json"
+        self.shared_address_book_file = self.wallet_dir / "shared_address_book.json"
+        self.contact_groups_file = self.wallet_dir / "contact_groups.json"
         self.config_file = self.wallet_dir / "config.json"
         self.window_size = "80x24"
         self.theme = "dark"
@@ -70,10 +115,20 @@ class Wallet:
         self.private_key = None
         self.public_key = None
         self.address = None
+        self.config = config or WalletConfig()
         self._load_config()
         self.facade = SymbolFacade(self.network_name)
         self._currency_mosaic_id: int | None = None
+        self._accounts: list[AccountInfo] = []
+        self._current_account_index: int = 0
+        self._load_accounts_registry()
         self._load_address_book()
+        self._load_contact_groups()
+        self._network_client = NetworkClient(
+            node_url=self.node_url,
+            timeout_config=self.config.timeout_config,
+            retry_config=self.config.retry_config,
+        )
 
     @staticmethod
     def _normalize_address(address: str) -> str:
@@ -114,7 +169,10 @@ class Wallet:
             if mosaic_id is None:
                 continue
             normalized.append(
-                {"id": mosaic_id, "amount": self._normalize_amount(mosaic.get("amount", 0))}
+                {
+                    "id": mosaic_id,
+                    "amount": self._normalize_amount(mosaic.get("amount", 0)),
+                }
             )
         return normalized
 
@@ -124,12 +182,21 @@ class Wallet:
             return None
 
         normalized_address = self._normalize_address(target_address)
-        url = f"{self.node_url}/accounts/{normalized_address}"
-        response = requests.get(url, timeout=10)
-        if response.status_code == 404:
+        try:
+            return self._network_client.get_optional(
+                f"/accounts/{normalized_address}",
+                context="Fetch account data",
+            )
+        except NetworkError:
             return None
-        response.raise_for_status()
-        return response.json().get("account", {})
+
+    def _update_node_url(self, node_url: str) -> None:
+        self.node_url = node_url
+        self._network_client = NetworkClient(
+            node_url=node_url,
+            timeout_config=self.config.timeout_config,
+            retry_config=self.config.retry_config,
+        )
 
     def _load_config(self):
         if self.config_file.exists():
@@ -141,6 +208,20 @@ class Wallet:
                 self.network_name = config.get("network", "testnet")
                 self.window_size = config.get("window_size", "80x24")
                 self.theme = config.get("theme", "dark")
+                timeout_cfg = config.get("timeout", {})
+                if timeout_cfg:
+                    self.config.timeout_config = TimeoutConfig(
+                        connect_timeout=timeout_cfg.get("connect_timeout", 5.0),
+                        read_timeout=timeout_cfg.get("read_timeout", 15.0),
+                        operation_timeout=timeout_cfg.get("operation_timeout", 30.0),
+                    )
+                retry_cfg = config.get("retry", {})
+                if retry_cfg:
+                    self.config.retry_config = RetryConfig(
+                        max_retries=retry_cfg.get("max_retries", 3),
+                        base_delay=retry_cfg.get("base_delay", 1.0),
+                        max_delay=retry_cfg.get("max_delay", 30.0),
+                    )
         else:
             self.node_url = "http://sym-test-01.opening-line.jp:3000"
             self.network_name = "testnet"
@@ -149,11 +230,23 @@ class Wallet:
             self._save_config()
 
     def _save_config(self):
+        timeout_cfg = self.config.timeout_config or TimeoutConfig()
+        retry_cfg = self.config.retry_config or RetryConfig()
         config = {
             "node_url": self.node_url,
             "network": self.network_name,
             "window_size": self.window_size,
             "theme": self.theme,
+            "timeout": {
+                "connect_timeout": timeout_cfg.connect_timeout,
+                "read_timeout": timeout_cfg.read_timeout,
+                "operation_timeout": timeout_cfg.operation_timeout,
+            },
+            "retry": {
+                "max_retries": retry_cfg.max_retries,
+                "base_delay": retry_cfg.base_delay,
+                "max_delay": retry_cfg.max_delay,
+            },
         }
         with open(self.config_file, "w") as f:
             json.dump(config, f, indent=2)
@@ -276,19 +369,9 @@ class Wallet:
             logger.info(f"Balance fetched for {address or self.address}")
             mosaics = account_data.get("mosaics", [])
             return self._normalize_mosaics(mosaics)
-        except requests.exceptions.Timeout:
-            logger.error(f"Connection timeout fetching balance: {self.node_url}")
-            raise Exception(
-                f"Connection timeout. Node may be unavailable: {self.node_url}"
-            )
-        except requests.exceptions.ConnectionError:
-            logger.error(f"Cannot connect to node: {self.node_url}")
-            raise Exception(
-                f"Cannot connect to node: {self.node_url}. Check your network connection."
-            )
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error fetching balance: {e.response.status_code}")
-            raise Exception(f"HTTP error: {e.response.status_code} - {e.response.text}")
+        except NetworkError as e:
+            logger.error(f"Network error fetching balance: {e.message}")
+            raise
         except Exception as e:
             logger.error(f"Error fetching balance: {str(e)}")
             raise Exception(f"Error fetching balance: {str(e)}")
@@ -375,21 +458,97 @@ class Wallet:
         else:
             self.address_book = {}
 
-    def _save_address_book(self):
-        with open(self.address_book_file, "w") as f:
-            json.dump(self.address_book, f, indent=2)
+    def _load_contact_groups(self):
+        if self.contact_groups_file.exists():
+            with open(self.contact_groups_file, "r") as f:
+                self.contact_groups = json.load(f)
+        else:
+            self.contact_groups = {}
 
-    def add_address(self, address, name, note=""):
-        self.address_book[address] = {"name": name, "address": address, "note": note}
+    def _save_contact_groups(self):
+        account = self.get_current_account()
+        if account and not account.address_book_shared:
+            groups_file = self._get_contact_groups_path(account.address)
+            with open(groups_file, "w") as f:
+                json.dump(self.contact_groups, f, indent=2)
+        else:
+            with open(self.contact_groups_file, "w") as f:
+                json.dump(self.contact_groups, f, indent=2)
+
+    def _get_contact_groups_path(self, address: str) -> Path:
+        normalized = self._normalize_address(address)
+        return self.wallet_dir / f"contact_groups_{normalized}.json"
+
+    def create_contact_group(self, name: str, color: str = "") -> str:
+        import uuid
+
+        group_id = str(uuid.uuid4())[:8]
+        self.contact_groups[group_id] = {
+            "id": group_id,
+            "name": name,
+            "color": color,
+        }
+        self._save_contact_groups()
+        logger.info(f"Contact group created: {name} ({group_id})")
+        return group_id
+
+    def update_contact_group(self, group_id: str, name: str, color: str = "") -> bool:
+        if group_id in self.contact_groups:
+            self.contact_groups[group_id]["name"] = name
+            self.contact_groups[group_id]["color"] = color
+            self._save_contact_groups()
+            logger.info(f"Contact group updated: {name} ({group_id})")
+            return True
+        return False
+
+    def delete_contact_group(self, group_id: str) -> bool:
+        if group_id in self.contact_groups:
+            for addr, info in self.address_book.items():
+                if info.get("group_id") == group_id:
+                    info["group_id"] = None
+            del self.contact_groups[group_id]
+            self._save_contact_groups()
+            self._save_address_book()
+            logger.info(f"Contact group deleted: {group_id}")
+            return True
+        return False
+
+    def get_contact_groups(self) -> dict[str, dict[str, str]]:
+        return self.contact_groups.copy()
+
+    def get_contact_group(self, group_id: str) -> dict[str, str] | None:
+        return self.contact_groups.get(group_id)
+
+    def get_addresses_by_group(self, group_id: str | None) -> dict[str, dict[str, str]]:
+        if group_id is None:
+            return {
+                addr: info
+                for addr, info in self.address_book.items()
+                if not info.get("group_id")
+            }
+        return {
+            addr: info
+            for addr, info in self.address_book.items()
+            if info.get("group_id") == group_id
+        }
+
+    def add_address(self, address, name, note="", group_id=None):
+        self.address_book[address] = {
+            "name": name,
+            "address": address,
+            "note": note,
+            "group_id": group_id,
+        }
         self._save_address_book()
         logger.info(f"Address added to book: {name} ({address})")
 
-    def update_address(self, address, name, note):
+    def update_address(self, address, name, note, group_id=None):
         if address in self.address_book:
             self.address_book[address] = {
                 "name": name,
                 "address": address,
                 "note": note,
+                "group_id": group_id,
             }
             self._save_address_book()
 
@@ -403,7 +562,7 @@ class Wallet:
 
     def get_address_info(self, address):
         return self.address_book.get(
-            address, {"name": "", "address": address, "note": ""}
+            address, {"name": "", "address": address, "note": "", "group_id": None}
         )
 
     def encrypt_private_key(self, password):
@@ -442,23 +601,15 @@ class Wallet:
         try:
             if not self.address:
                 return []
-            url = f"{self.node_url}/accounts/{str(self.address)}/transactions?limit={limit}"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 404:
+            result = self._network_client.get_optional(
+                f"/accounts/{str(self.address)}/transactions?limit={limit}",
+                context="Fetch transaction history",
+            )
+            if result is None:
                 return []
-            response.raise_for_status()
-            transactions = response.json()
-            return transactions.get("data", [])
-        except requests.exceptions.Timeout:
-            raise Exception(
-                f"Connection timeout. Node may be unavailable: {self.node_url}"
-            )
-        except requests.exceptions.ConnectionError:
-            raise Exception(
-                f"Cannot connect to node: {self.node_url}. Check your network connection."
-            )
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"HTTP error: {e.response.status_code} - {e.response.text}")
+            return result.get("data", [])
+        except NetworkError:
+            raise
         except Exception as e:
             raise Exception(f"Error fetching transaction history: {str(e)}")
 
@@ -466,12 +617,12 @@ class Wallet:
         groups = ("confirmed", "unconfirmed", "partial")
         normalized_hash = tx_hash.strip().upper()
         for group in groups:
-            url = f"{self.node_url}/transactions/{group}/{normalized_hash}"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 404:
-                continue
-            response.raise_for_status()
-            return {"hash": normalized_hash, "group": group, "data": response.json()}
+            result = self._network_client.get_optional(
+                f"/transactions/{group}/{normalized_hash}",
+                context="Fetch transaction status",
+            )
+            if result is not None:
+                return {"hash": normalized_hash, "group": group, "data": result}
 
         return {"hash": normalized_hash, "group": "not_found", "data": None}
 
@@ -510,10 +661,11 @@ class Wallet:
         latest_count = 0
 
         while time.time() < deadline:
-            url = f"{self.node_url}/transactions/confirmed?limit={page_size}&order=desc"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            data = response.json().get("data", [])
+            result = self._network_client.get(
+                f"/transactions/confirmed?limit={page_size}&order=desc",
+                context="Wait for confirmed transaction",
+            )
+            data = result.get("data", [])
             latest_count = len(data)
 
             for tx in data:
@@ -535,26 +687,130 @@ class Wallet:
             f"(last scanned items: {latest_count})."
         )
 
-    def get_mosaic_info(self, mosaic_id):
+    def get_mosaic_info(self, mosaic_id: str | int) -> dict[str, Any] | None:
         try:
-            url = f"{self.node_url}/mosaics/{mosaic_id}"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.json()
+            return self._network_client.get_optional(
+                f"/mosaics/{mosaic_id}",
+                context="Fetch mosaic info",
+            )
         except Exception:
             return None
+
+    def get_mosaic_metadata(self, mosaic_id: int) -> list[dict[str, Any]]:
+        metadata_type = 1
+        try:
+            result = self._network_client.get_optional(
+                f"/metadata?targetId={mosaic_id}&metadataType={metadata_type}",
+                context="Fetch mosaic metadata",
+            )
+            if result is None:
+                return []
+            data = result.get("data", [])
+            metadata_list = []
+            for entry in data:
+                metadata_entry = entry.get("metadataEntry", {})
+                value_hex = metadata_entry.get("value", "")
+                try:
+                    value = bytes.fromhex(value_hex).decode("utf-8")
+                except (ValueError, UnicodeDecodeError):
+                    value = value_hex
+                metadata_list.append(
+                    {
+                        "key": hex(metadata_entry.get("scopedMetadataKey", 0)),
+                        "value": value,
+                        "source_address": metadata_entry.get("sourceAddress", ""),
+                        "target_address": metadata_entry.get("targetAddress", ""),
+                    }
+                )
+            return metadata_list
+        except Exception:
+            return []
+
+    def get_mosaic_namespace_name(self, mosaic_id: int) -> str | None:
+        try:
+            result = self._network_client.get_optional(
+                f"/namespaces/mosaic/{mosaic_id}",
+                context="Fetch mosaic namespace",
+            )
+            if result is None:
+                return None
+            data = result.get("data", [])
+            if not data:
+                return None
+            namespace_info = data[0].get("namespace", {})
+            name = namespace_info.get("name", "")
+            return name if name else None
+        except Exception:
+            return None
+
+    def get_mosaic_full_info(self, mosaic_id: int) -> dict[str, Any]:
+        mosaic_info = self.get_mosaic_info(mosaic_id)
+        if mosaic_info is None:
+            return {
+                "mosaic_id": mosaic_id,
+                "mosaic_id_hex": hex(mosaic_id),
+                "found": False,
+            }
+
+        mosaic_data = mosaic_info.get("mosaic", mosaic_info)
+
+        flags_value = mosaic_data.get("flags", 0)
+        flags = {
+            "supply_mutable": bool(flags_value & 0x02),
+            "transferable": bool(flags_value & 0x01),
+            "restrictable": bool(flags_value & 0x04),
+            "revokable": bool(flags_value & 0x08),
+        }
+
+        owner_address_raw = mosaic_data.get("ownerAddress", "")
+        if owner_address_raw:
+            try:
+                if owner_address_raw.startswith("0x"):
+                    owner_address_raw = owner_address_raw[2:]
+                owner_address = owner_address_raw
+            except Exception:
+                owner_address = owner_address_raw
+        else:
+            owner_address = ""
+
+        namespace_name = self.get_mosaic_namespace_name(mosaic_id)
+        mosaic_name = (
+            namespace_name if namespace_name else self.get_mosaic_name(mosaic_id)
+        )
+
+        metadata = self.get_mosaic_metadata(mosaic_id)
+
+        description = ""
+        for meta in metadata:
+            key = meta.get("key", "")
+            if key.lower() in ("0x0", "0x00", "0"):
+                description = meta.get("value", "")
+                break
+
+        return {
+            "mosaic_id": mosaic_id,
+            "mosaic_id_hex": hex(mosaic_id),
+            "found": True,
+            "name": mosaic_name,
+            "divisibility": mosaic_data.get("divisibility", 0),
+            "supply": int(mosaic_data.get("supply", 0)),
+            "owner_address": owner_address,
+            "flags": flags,
+            "duration": int(mosaic_data.get("duration", 0)),
+            "start_height": int(mosaic_data.get("startHeight", 0)),
+            "metadata": metadata,
+            "description": description,
+        }
 
     def get_currency_mosaic_id(self) -> int | None:
         if self._currency_mosaic_id is not None:
             return self._currency_mosaic_id
 
         try:
-            url = f"{self.node_url}/network/properties"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            properties = response.json()
+            properties = self._network_client.get(
+                "/network/properties",
+                context="Fetch network properties",
+            )
             value = (
                 properties.get("chain", {})
                 .get("currencyMosaicId", "")
@@ -599,62 +855,28 @@ class Wallet:
             "72c0212e67a08bce": "XYM",
         }
         currency_id = self.get_currency_mosaic_id()
-        if currency_id is not None and mosaic_id_hex.lower() == hex(currency_id).lower():
+        if (
+            currency_id is not None
+            and mosaic_id_hex.lower() == hex(currency_id).lower()
+        ):
             return "XYM"
         if mosaic_id_hex.lower() in known_mosaics:
             return known_mosaics[mosaic_id_hex.lower()]
         return mosaic_id_hex
 
-    def test_node_connection(self, node_url=None):
+    def test_node_connection(self, node_url: str | None = None) -> dict[str, Any]:
         """Test if a node is accessible and healthy."""
         url = node_url if node_url else self.node_url
+        test_client = NetworkClient(
+            node_url=url,
+            timeout_config=self.config.timeout_config,
+            retry_config=self.config.retry_config,
+        )
         try:
-            # Test node health
-            health_url = f"{url}/node/health"
-            response = requests.get(health_url, timeout=10)
-            response.raise_for_status()
-            health_data = response.json()
-
-            # Test network info
-            network_url = f"{url}/node/info"
-            network_response = requests.get(network_url, timeout=10)
-            network_response.raise_for_status()
-            network_data = network_response.json()
-
-            status = health_data.get("status", {})
-            api_node = status.get("apiNode", "down")
-            db_node = status.get("dbNode", "down")
-
-            is_healthy = api_node == "up"
-            network_height = network_data.get("networkHeight", 0)
-
-            logger.info(
-                f"Node connection test: {url} - Healthy: {is_healthy}, Height: {network_height}"
-            )
-
-            return {
-                "healthy": is_healthy,
-                "apiNode": api_node,
-                "dbNode": db_node,
-                "networkHeight": network_height,
-                "url": url,
-            }
-        except requests.exceptions.Timeout:
-            logger.error(f"Node connection timeout: {url}")
-            raise Exception(f"Connection timeout. Node at {url} may be unavailable.")
-        except requests.exceptions.ConnectionError:
-            logger.error(f"Cannot connect to node: {url}")
-            raise Exception(
-                f"Cannot connect to node. Check your network and node URL: {url}"
-            )
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error testing node: {e.response.status_code}")
-            raise Exception(
-                f"Node returned HTTP error {e.response.status_code}: {e.response.text}"
-            )
-        except Exception as e:
-            logger.error(f"Error testing node connection: {str(e)}")
-            raise Exception(f"Error testing node: {str(e)}")
+            return test_client.test_connection()
+        except NetworkError as e:
+            logger.error(f"Node connection test failed: {e.message}")
+            raise Exception(e.message)
 
     def create_mosaic_transaction(
         self,
@@ -693,6 +915,136 @@ class Wallet:
         )
         return mosaic_tx
 
+    def create_root_namespace_transaction(
+        self,
+        name: str,
+        duration_blocks: int,
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_id(name.lower())
+
+        ns_dict = {
+            "type": "namespace_registration_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "id": namespace_id,
+            "registration_type": "root",
+            "name": name.lower(),
+            "duration": duration_blocks,
+        }
+
+        ns_tx = self.facade.transaction_factory.create(ns_dict)
+        logger.info(
+            f"Root namespace transaction created: {name}, duration={duration_blocks}"
+        )
+        return ns_tx
+
+    def create_sub_namespace_transaction(
+        self,
+        name: str,
+        parent_name: str,
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        parent_parts = parent_name.lower().split(".")
+        parent_id = 0
+        for part in parent_parts:
+            parent_id = self._generate_namespace_id(part, parent_id)
+
+        full_name = f"{parent_name}.{name}".lower()
+        namespace_id = self._generate_namespace_id(name.lower(), parent_id)
+
+        ns_dict = {
+            "type": "namespace_registration_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "id": namespace_id,
+            "registration_type": "child",
+            "name": name.lower(),
+            "parent_id": parent_id,
+        }
+
+        ns_tx = self.facade.transaction_factory.create(ns_dict)
+        logger.info(f"Sub-namespace transaction created: {full_name}")
+        return ns_tx
+
+    def create_address_alias_transaction(
+        self,
+        namespace_name: str,
+        address: str,
+        link_action: str = "link",
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_path(namespace_name.lower())[-1]
+
+        alias_dict = {
+            "type": "address_alias_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "namespace_id": namespace_id,
+            "address": address.replace("-", "").upper(),
+            "alias_action": link_action,
+        }
+
+        alias_tx = self.facade.transaction_factory.create(alias_dict)
+        logger.info(
+            f"Address alias transaction created: {namespace_name} -> {address}, action={link_action}"
+        )
+        return alias_tx
+
+    def create_mosaic_alias_transaction(
+        self,
+        namespace_name: str,
+        mosaic_id: int,
+        link_action: str = "link",
+    ):
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        namespace_id = self._generate_namespace_path(namespace_name.lower())[-1]
+
+        alias_dict = {
+            "type": "mosaic_alias_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "namespace_id": namespace_id,
+            "mosaic_id": mosaic_id,
+            "alias_action": link_action,
+        }
+
+        alias_tx = self.facade.transaction_factory.create(alias_dict)
+        logger.info(
+            f"Mosaic alias transaction created: {namespace_name} -> {hex(mosaic_id)}, action={link_action}"
+        )
+        return alias_tx
+
+    def _generate_namespace_id(self, name: str, parent_id: int = 0) -> int:
+        name_bytes = name.encode("utf-8")
+        namespace_id = parent_id
+        for i, char_byte in enumerate(name_bytes):
+            namespace_id = (namespace_id * 31 + char_byte) & 0xFFFFFFFFFFFFFFFF
+            if i == 0:
+                namespace_id = namespace_id | 0x8000000000000000
+        return namespace_id
+
+    def _generate_namespace_path(self, full_name: str) -> list[int]:
+        parts = full_name.lower().split(".")
+        path = [0]
+        for part in parts:
+            parent_id = path[-1]
+            namespace_id = self._generate_namespace_id(part, parent_id)
+            path.append(namespace_id)
+        return path[1:]
+
     def get_harvesting_status(self):
         """Get harvesting status of account."""
         try:
@@ -702,18 +1054,18 @@ class Wallet:
                     "is_remote": False,
                     "linked_public_key": None,
                 }
-            url = f"{self.node_url}/accounts/{str(self.address)}"
-            response = requests.get(url, timeout=10)
-            if response.status_code == 404:
+            result = self._network_client.get_optional(
+                f"/accounts/{str(self.address)}",
+                context="Fetch harvesting status",
+            )
+            if result is None:
                 logger.warning(f"Account not found: {self.address}")
                 return {
                     "is_harvesting": False,
                     "is_remote": False,
                     "linked_public_key": None,
                 }
-            response.raise_for_status()
-            account_info = response.json()
-            account_data = account_info.get("account", {})
+            account_data = result.get("account", {})
             remote_account = account_data.get("remoteAccount", None)
             logger.info(
                 f"Harvesting status fetched: is_remote={remote_account is not None}"
@@ -723,6 +1075,8 @@ class Wallet:
                 "is_remote": remote_account is not None,
                 "linked_public_key": remote_account,
             }
+        except NetworkError:
+            raise
         except Exception as e:
             logger.error(f"Error fetching harvesting status: {str(e)}")
             raise Exception(f"Error fetching harvesting status: {str(e)}")
@@ -765,3 +1119,254 @@ class Wallet:
         link_tx = self.facade.transaction_factory.create(link_dict)
         logger.info(f"Harvesting unlink transaction created for {self.address}")
         return link_tx
+
+    def _load_accounts_registry(self):
+        if self.accounts_file.exists():
+            try:
+                with open(self.accounts_file, "r") as f:
+                    data = json.load(f)
+                    version = data.get("version", 0)
+                    if version >= MULTI_ACCOUNT_VERSION:
+                        self._accounts = [
+                            AccountInfo.from_dict(acc)
+                            for acc in data.get("accounts", [])
+                        ]
+                        self._current_account_index = data.get(
+                            "current_account_index", 0
+                        )
+                    else:
+                        self._migrate_legacy_wallet_to_accounts()
+            except Exception as e:
+                logger.warning(f"Failed to load accounts registry: {e}")
+                self._accounts = []
+                self._current_account_index = 0
+        else:
+            self._accounts = []
+            self._current_account_index = 0
+            if self.has_wallet():
+                self._migrate_legacy_wallet_to_accounts()
+
+    def _migrate_legacy_wallet_to_accounts(self):
+        if self.wallet_file.exists():
+            try:
+                with open(self.wallet_file, "r") as f:
+                    data = json.load(f)
+                encrypted_key = data.get("encrypted_private_key")
+                public_key = data.get("public_key")
+                if encrypted_key and public_key:
+                    legacy_account = AccountInfo(
+                        address="",
+                        public_key=public_key,
+                        encrypted_private_key=encrypted_key,
+                        label="Main Account",
+                        address_book_shared=True,
+                    )
+                    self._accounts = [legacy_account]
+                    self._current_account_index = 0
+                    self._save_accounts_registry()
+                    logger.info("Migrated legacy wallet to multi-account format")
+            except Exception as e:
+                logger.warning(f"Failed to migrate legacy wallet: {e}")
+
+    def _save_accounts_registry(self):
+        data = {
+            "version": MULTI_ACCOUNT_VERSION,
+            "accounts": [acc.to_dict() for acc in self._accounts],
+            "current_account_index": self._current_account_index,
+        }
+        with open(self.accounts_file, "w") as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Saved accounts registry with {len(self._accounts)} accounts")
+
+    def get_accounts(self) -> list[AccountInfo]:
+        return self._accounts.copy()
+
+    def get_current_account(self) -> AccountInfo | None:
+        if 0 <= self._current_account_index < len(self._accounts):
+            return self._accounts[self._current_account_index]
+        return None
+
+    def get_current_account_index(self) -> int:
+        return self._current_account_index
+
+    def create_account(
+        self, label: str = "", address_book_shared: bool = True
+    ) -> AccountInfo:
+        if not self.password:
+            raise Exception("Password is required to create account")
+        new_account = self.facade.create_account(PrivateKey.random())
+        encrypted_private_key = self._encrypt_private_key_for_account(
+            str(new_account.key_pair.private_key), self.password
+        )
+        account_info = AccountInfo(
+            address=str(new_account.address),
+            public_key=str(new_account.public_key),
+            encrypted_private_key=encrypted_private_key,
+            label=label or f"Account {len(self._accounts) + 1}",
+            address_book_shared=address_book_shared,
+        )
+        self._accounts.append(account_info)
+        self._save_accounts_registry()
+        if not account_info.address_book_shared:
+            self._ensure_account_address_book(account_info.address)
+        logger.info(f"Created new account: {account_info.address}")
+        return account_info
+
+    def import_account(
+        self, private_key_hex: str, label: str = "", address_book_shared: bool = True
+    ) -> AccountInfo:
+        if not self.password:
+            raise Exception("Password is required to import account")
+        private_key = PrivateKey(private_key_hex)
+        account = self.facade.create_account(private_key)
+        encrypted_private_key = self._encrypt_private_key_for_account(
+            str(private_key), self.password
+        )
+        for existing in self._accounts:
+            if existing.address == str(account.address):
+                raise Exception(f"Account {account.address} already exists")
+        account_info = AccountInfo(
+            address=str(account.address),
+            public_key=str(account.public_key),
+            encrypted_private_key=encrypted_private_key,
+            label=label or f"Account {len(self._accounts) + 1}",
+            address_book_shared=address_book_shared,
+        )
+        self._accounts.append(account_info)
+        self._save_accounts_registry()
+        if not account_info.address_book_shared:
+            self._ensure_account_address_book(account_info.address)
+        logger.info(f"Imported account: {account_info.address}")
+        return account_info
+
+    def switch_account(self, index: int) -> bool:
+        if 0 <= index < len(self._accounts):
+            self._current_account_index = index
+            self._save_accounts_registry()
+            account = self._accounts[index]
+            self._load_account_into_session(account)
+            logger.info(f"Switched to account: {account.label} ({account.address})")
+            return True
+        return False
+
+    def _load_account_into_session(self, account: AccountInfo):
+        if not self.password:
+            raise Exception("Password is required to load account")
+        try:
+            private_key_hex = self._decrypt_private_key_for_account(
+                account.encrypted_private_key, self.password
+            )
+            self.private_key = PrivateKey(private_key_hex)
+            loaded_account = self.facade.create_account(self.private_key)
+            self.public_key = loaded_account.public_key
+            self.address = loaded_account.address
+            self._load_address_book_for_account(account)
+        except Exception as e:
+            logger.error(f"Failed to load account: {e}")
+            raise
+
+    def _load_address_book_for_account(self, account: AccountInfo):
+        if account.address_book_shared:
+            self._load_address_book()
+            self._load_contact_groups()
+        else:
+            account_book_file = self._get_account_address_book_path(account.address)
+            if account_book_file.exists():
+                with open(account_book_file, "r") as f:
+                    self.address_book = json.load(f)
+            else:
+                self.address_book = {}
+            groups_file = self._get_contact_groups_path(account.address)
+            if groups_file.exists():
+                with open(groups_file, "r") as f:
+                    self.contact_groups = json.load(f)
+            else:
+                self.contact_groups = {}
+
+    def _get_account_address_book_path(self, address: str) -> Path:
+        normalized = self._normalize_address(address)
+        return self.wallet_dir / f"address_book_{normalized}.json"
+
+    def _ensure_account_address_book(self, address: str):
+        path = self._get_account_address_book_path(address)
+        if not path.exists():
+            with open(path, "w") as f:
+                json.dump({}, f)
+
+    def _encrypt_private_key_for_account(self, private_key: str, password: str) -> str:
+        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
+        cipher = Fernet(key)
+        encrypted = cipher.encrypt(private_key.encode())
+        return encrypted.decode()
+
+    def _decrypt_private_key_for_account(
+        self, encrypted_key: str, password: str
+    ) -> str:
+        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
+        cipher = Fernet(key)
+        try:
+            decrypted = cipher.decrypt(encrypted_key.encode())
+            return decrypted.decode()
+        except Exception as e:
+            raise Exception(f"Failed to decrypt private key: {str(e)}")
+
+    def delete_account(self, index: int) -> bool:
+        if len(self._accounts) <= 1:
+            logger.warning("Cannot delete the last account")
+            return False
+        if 0 <= index < len(self._accounts):
+            account = self._accounts[index]
+            if not account.address_book_shared:
+                book_path = self._get_account_address_book_path(account.address)
+                if book_path.exists():
+                    book_path.unlink()
+            del self._accounts[index]
+            if self._current_account_index >= len(self._accounts):
+                self._current_account_index = len(self._accounts) - 1
+            self._save_accounts_registry()
+            logger.info(f"Deleted account: {account.address}")
+            return True
+        return False
+
+    def update_account_label(self, index: int, label: str) -> bool:
+        if 0 <= index < len(self._accounts):
+            self._accounts[index].label = label
+            self._save_accounts_registry()
+            logger.info(f"Updated account {index} label to: {label}")
+            return True
+        return False
+
+    def update_account_address_book_shared(self, index: int, shared: bool) -> bool:
+        if 0 <= index < len(self._accounts):
+            account = self._accounts[index]
+            old_shared = account.address_book_shared
+            account.address_book_shared = shared
+            self._save_accounts_registry()
+            if old_shared and not shared:
+                self._ensure_account_address_book(account.address)
+            elif not old_shared and shared:
+                book_path = self._get_account_address_book_path(account.address)
+                if book_path.exists():
+                    book_path.unlink()
+            logger.info(f"Updated account {index} address_book_shared to: {shared}")
+            return True
+        return False
+
+    def load_current_account(self):
+        if not self.password:
+            raise Exception("Password is required")
+        account = self.get_current_account()
+        if account:
+            self._load_account_into_session(account)
+            return True
+        return False
+
+    def _save_address_book(self):
+        account = self.get_current_account()
+        if account and not account.address_book_shared:
+            book_path = self._get_account_address_book_path(account.address)
+            with open(book_path, "w") as f:
+                json.dump(self.address_book, f, indent=2)
+        else:
+            with open(self.address_book_file, "w") as f:
+                json.dump(self.address_book, f, indent=2)

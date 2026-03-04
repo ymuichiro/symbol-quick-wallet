@@ -59,6 +59,7 @@ class MultisigService:
 
     DEFAULT_FEE_MULTIPLIER = 100
     SIZE_PER_COSIGNATURE = 104
+    AGGREGATE_COMPLETE_TYPE = "aggregate_complete_transaction_v3"
 
     def __init__(self, wallet: WalletProtocol, node_url: str | None = None):
         self.wallet = wallet
@@ -155,7 +156,7 @@ class MultisigService:
         transactions_hash = self.facade.hash_embedded_transactions([embedded_tx])
 
         aggregate_dict = {
-            "type": "aggregate_complete_transaction_v2",
+            "type": self.AGGREGATE_COMPLETE_TYPE,
             "signer_public_key": str(self.wallet.public_key),
             "deadline": deadline_timestamp,
             "transactions_hash": str(transactions_hash),

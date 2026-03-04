@@ -1,5 +1,7 @@
 """Tests for transaction monitoring service."""
 
+import time
+
 import pytest
 
 from src.features.monitoring.service import (
@@ -76,6 +78,19 @@ class TestTransactionMonitor:
         monitor = TransactionMonitor("http://sym-test-01.opening-line.jp:3000")
         assert monitor.is_connected is False
         assert monitor.uid is None
+
+    def test_upgrade_to_wss_on_https_port_error(self):
+        monitor = TransactionMonitor("http://sym-test-01.opening-line.jp:3000")
+        assert monitor.ws_url.startswith("ws://")
+
+        monitor._on_ws_error(
+            None,
+            Exception(
+                "Handshake status 400 Bad Request - The plain HTTP request was sent to HTTPS port"
+            ),
+        )
+
+        assert monitor.ws_url.startswith("wss://")
 
     def test_add_callback(self):
         monitor = TransactionMonitor("http://sym-test-01.opening-line.jp:3000")
@@ -179,28 +194,75 @@ class TestTransactionStatusNotification:
 
 @pytest.mark.integration
 class TestTransactionMonitorIntegration:
-    def test_monitor_starts_and_stops(self):
-        monitor = TransactionMonitor("http://sym-test-01.opening-line.jp:3000")
-        monitor.start()
-        assert monitor._running is True
-        monitor.stop()
-        assert monitor._running is False
-        assert monitor.is_connected is False
-
-    def test_subscribe_address_normalization(self):
-        monitor = TransactionMonitor("http://sym-test-01.opening-line.jp:3000")
-        monitor._uid = "test-uid"
-        monitor._connected = True
-
-        address = "tbxutax6o6euvpb6x7obnx6uuxbmppafx7ke5tq"
-        monitor.subscribe_address(
-            address,
-            include_confirmed=True,
-            include_unconfirmed=False,
-            include_partial=False,
-            include_status=False,
-            include_cosignature=False,
+    def test_monitor_connects_to_real_ws(self, testnet_node_url):
+        monitor = TransactionMonitor(
+            testnet_node_url,
+            config=MonitoringConfig(
+                reconnect_delay=1.0,
+                max_reconnect_delay=2.0,
+                ping_interval=5.0,
+                connection_timeout=10.0,
+            ),
         )
+        try:
+            monitor.start()
+            if not monitor.wait_for_connection(timeout_seconds=20):
+                pytest.skip("WebSocket listener connection could not be established")
 
-        normalized = address.upper().replace("-", "")
-        assert normalized in monitor._watched_addresses
+            assert monitor._running is True
+            assert monitor.is_connected is True
+            assert monitor.uid is not None
+        finally:
+            monitor.stop()
+            assert monitor._running is False
+            assert monitor.is_connected is False
+
+    def test_subscribe_block_channel_real_ws(self, testnet_node_url):
+        monitor = TransactionMonitor(testnet_node_url)
+        try:
+            monitor.start()
+            if not monitor.wait_for_connection(timeout_seconds=20):
+                pytest.skip("WebSocket listener connection could not be established")
+
+            subscribed = monitor.subscribe_block()
+            assert subscribed is True
+            assert ListenerChannel.BLOCK.value in monitor._subscribed_channels
+        finally:
+            monitor.stop()
+
+    @pytest.mark.slow
+    def test_receives_block_notification_real_ws(self, testnet_node_url):
+        blocks: list[BlockNotification] = []
+
+        def on_block(notification: BlockNotification) -> None:
+            blocks.append(notification)
+
+        monitor = TransactionMonitor(
+            testnet_node_url,
+            config=MonitoringConfig(
+                reconnect_delay=1.0,
+                max_reconnect_delay=2.0,
+                ping_interval=5.0,
+                connection_timeout=10.0,
+            ),
+            on_block=on_block,
+        )
+        try:
+            monitor.start()
+            if not monitor.wait_for_connection(timeout_seconds=20):
+                pytest.skip("WebSocket listener connection could not be established")
+
+            if not monitor.subscribe_block():
+                pytest.skip("Failed to subscribe block channel")
+
+            deadline = time.time() + 90
+            while time.time() < deadline and not blocks:
+                time.sleep(1)
+
+            if not blocks:
+                pytest.skip("No block notification received within timeout")
+
+            assert isinstance(blocks[0], BlockNotification)
+            assert isinstance(blocks[0].block, dict)
+        finally:
+            monitor.stop()

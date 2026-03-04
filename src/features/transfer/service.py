@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from src.shared.logging import get_logger
 from src.shared.protocols import WalletProtocol as SharedWalletProtocol
+from src.shared.validation import AddressValidator
 
 logger = get_logger(__name__)
 
@@ -68,11 +69,7 @@ class TransferService:
 
     def validate_recipient_address(self, address: str) -> bool:
         """Validate a recipient address format."""
-        if not address or not address.strip():
-            return False
-        normalized = address.strip().replace("-", "").upper()
-        if len(normalized) < 39 or len(normalized) > 40:
-            return False
-        if normalized[0] not in ("T", "N"):
-            return False
-        return True
+        result = AddressValidator.validate(
+            address, expected_network=self.wallet.network_name
+        )
+        return result.is_valid

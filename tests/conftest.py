@@ -1,5 +1,6 @@
 import os
 import pytest
+import requests
 import tempfile
 from pathlib import Path
 from symbolchain.CryptoTypes import PrivateKey
@@ -11,12 +12,55 @@ TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
 TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
 
 
+def _iter_testnet_node_candidates() -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    env_single = os.getenv("SYMBOL_TEST_NODE_URL", "").strip()
+    env_multi = os.getenv("SYMBOL_TEST_NODE_URLS", "")
+    env_nodes = [n.strip() for n in env_multi.split(",") if n.strip()]
+
+    for raw in [env_single, *env_nodes, TESTNET_NODE, "http://sym-test-03.opening-line.jp:3000"]:
+        if not raw:
+            continue
+        node = raw.rstrip("/")
+        if node in seen:
+            continue
+        seen.add(node)
+        candidates.append(node)
+
+    return candidates
+
+
+def _select_reachable_testnet_node() -> str:
+    for node_url in _iter_testnet_node_candidates():
+        try:
+            response = requests.get(f"{node_url}/node/health", timeout=(3, 5))
+            if response.status_code != 200:
+                continue
+            payload = response.json()
+            status = payload.get("status", {}) if isinstance(payload, dict) else {}
+            if status.get("apiNode") == "up":
+                return node_url
+        except Exception:
+            continue
+
+    # Keep deterministic fallback to avoid changing behavior when all checks fail.
+    return TESTNET_NODE
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--test-key-file",
         action="store",
         default=".test_key",
         help="Path to file containing test wallet private key",
+    )
+    parser.addoption(
+        "--require-live-key",
+        action="store_true",
+        default=False,
+        help="Fail instead of skip when live-key fixtures are requested but unavailable",
     )
 
 
@@ -29,35 +73,61 @@ def test_key_file(request: pytest.FixtureRequest) -> Path | None:
 
 
 @pytest.fixture
+def require_live_key(request: pytest.FixtureRequest) -> bool:
+    return bool(request.config.getoption("--require-live-key"))
+
+
+@pytest.fixture
 def test_private_key(test_key_file: Path | None) -> PrivateKey | None:
-    if test_key_file is None:
-        return None
-    private_key_hex = test_key_file.read_text().strip()
+    private_key_hex = ""
+    source = ""
+
+    if test_key_file is not None:
+        private_key_hex = test_key_file.read_text().strip()
+        source = f"file: {test_key_file}"
+    else:
+        private_key_hex = os.getenv("SYMBOL_TEST_PRIVATE_KEY", "").strip()
+        source = "environment variable: SYMBOL_TEST_PRIVATE_KEY"
+
     if not private_key_hex:
         return None
-    return PrivateKey(private_key_hex)
+
+    try:
+        return PrivateKey(private_key_hex)
+    except Exception as exc:
+        pytest.fail(f"Invalid test private key in {source}: {exc}")
 
 
 @pytest.fixture
 def testnet_wallet():
     """Fixture providing an unloaded testnet wallet."""
+    node_url = _select_reachable_testnet_node()
     wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
+    wallet.node_url = node_url
+    wallet._update_node_url(node_url)
     return wallet
 
 
 @pytest.fixture
-def loaded_testnet_wallet(test_private_key: PrivateKey | None):
+def loaded_testnet_wallet(
+    test_private_key: PrivateKey | None,
+    require_live_key: bool,
+):
     """Fixture providing a loaded testnet wallet with private key from --test-key-file."""
     if test_private_key is None:
-        pytest.skip(
-            "No test private key available. Run: uv run python scripts/setup_test_key.py"
+        message = (
+            "No test private key available. "
+            "Run: uv run python scripts/setup_test_key.py "
+            "or set SYMBOL_TEST_PRIVATE_KEY."
         )
+        if require_live_key:
+            pytest.fail(message)
+        pytest.skip(message)
 
+    node_url = _select_reachable_testnet_node()
     wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
+    wallet.node_url = node_url
+    wallet._update_node_url(node_url)
     wallet.facade = SymbolFacade("testnet")
     wallet.private_key = test_private_key
     account = wallet.facade.create_account(wallet.private_key)
@@ -113,7 +183,7 @@ def xym_mosaic_id_decimal():
 @pytest.fixture
 def testnet_node_url():
     """Fixture providing testnet node URL"""
-    return "http://sym-test-01.opening-line.jp:3000"
+    return _select_reachable_testnet_node()
 
 
 @pytest.fixture

@@ -36,7 +36,7 @@ class TestTransactionBuilding:
     def test_create_transfer_transaction_basic(
         self, transaction_manager, loaded_wallet
     ):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics)
         assert tx is not None
@@ -44,7 +44,7 @@ class TestTransactionBuilding:
 
     @pytest.mark.unit
     def test_create_transfer_with_message(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         message = "Hello Symbol!"
         tx = transaction_manager.create_transfer_transaction(
@@ -54,14 +54,14 @@ class TestTransactionBuilding:
 
     @pytest.mark.unit
     def test_create_transfer_empty_message(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics, "")
         assert tx is not None
 
     @pytest.mark.unit
     def test_create_transfer_with_multiple_mosaics(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [
             {"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000},
             {"mosaic_id": "0x1234567890ABCDEF", "amount": 500},
@@ -82,14 +82,14 @@ class TestTransactionBuilding:
     @pytest.mark.unit
     def test_create_transfer_without_wallet_raises(self, wallet):
         manager = TransactionManager(wallet)
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         with pytest.raises(ValueError, match="Wallet is not loaded"):
             manager.create_transfer_transaction(recipient, mosaics)
 
     @pytest.mark.unit
     def test_address_normalization_in_transaction(self, transaction_manager):
-        recipient_with_dashes = "TD5Z-P2WO-JKFM-GCVC-3GO3-2CQJ-SU6J-F3TZ-LOIJ-2HA"
+        recipient_with_dashes = "TCWY-XKVY-BMO4-NBCU-F3AX-KJMX-CGVS-YQOS-7ZG2-TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(
             recipient_with_dashes, mosaics
@@ -120,7 +120,7 @@ class TestTransactionSigning:
     def test_sign_transaction_returns_signature(
         self, transaction_manager, loaded_wallet
     ):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics)
         signature = transaction_manager.sign_transaction(tx)
@@ -128,7 +128,7 @@ class TestTransactionSigning:
 
     @pytest.mark.unit
     def test_attach_signature_returns_payload(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics)
         signature = transaction_manager.sign_transaction(tx)
@@ -138,7 +138,7 @@ class TestTransactionSigning:
 
     @pytest.mark.unit
     def test_calculate_transaction_hash(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics)
         signature = transaction_manager.sign_transaction(tx)
@@ -151,7 +151,7 @@ class TestTransactionSigning:
 
     @pytest.mark.unit
     def test_same_transaction_same_hash(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics)
         signature = transaction_manager.sign_transaction(tx)
@@ -174,7 +174,7 @@ class TestTransactionSigning:
             "type": "transfer_transaction_v1",
             "signer_public_key": "A" * 64,
             "deadline": 1234567890000,
-            "recipient_address": "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA",
+            "recipient_address": "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI",
             "mosaics": [],
             "message": "",
         }
@@ -186,7 +186,7 @@ class TestTransactionSigning:
 class TestTransactionMessageValidation:
     @pytest.mark.unit
     def test_message_within_limit(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         message = "A" * 1000
         tx = transaction_manager.create_transfer_transaction(
@@ -196,7 +196,7 @@ class TestTransactionMessageValidation:
 
     @pytest.mark.unit
     def test_message_exactly_max_bytes(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         message = "A" * 1023
         tx = transaction_manager.create_transfer_transaction(
@@ -206,7 +206,7 @@ class TestTransactionMessageValidation:
 
     @pytest.mark.unit
     def test_message_exceeds_max_bytes(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         message = "A" * 1024
         with pytest.raises(ValueError, match="Message is too long"):
@@ -214,7 +214,7 @@ class TestTransactionMessageValidation:
 
     @pytest.mark.unit
     def test_unicode_message_byte_count(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         message = "日本語" * 100
         tx = transaction_manager.create_transfer_transaction(
@@ -224,7 +224,7 @@ class TestTransactionMessageValidation:
 
     @pytest.mark.unit
     def test_none_message_treated_as_empty(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "0x6BED913FA20223F8", "amount": 1000000}]
         tx = transaction_manager.create_transfer_transaction(recipient, mosaics, None)
         assert tx is not None
@@ -233,7 +233,7 @@ class TestTransactionMessageValidation:
 class TestTransactionErrors:
     @pytest.mark.unit
     def test_transaction_invalid_mosaic_id(self, transaction_manager):
-        recipient = "TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA"
+        recipient = "TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI"
         mosaics = [{"mosaic_id": "invalid", "amount": 1000000}]
         with pytest.raises(ValueError):
             transaction_manager.create_transfer_transaction(recipient, mosaics)

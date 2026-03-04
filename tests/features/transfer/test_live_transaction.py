@@ -177,36 +177,22 @@ def test_transaction_manager_calculates_hash_and_uses_json_payload(monkeypatch):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_live_send_and_confirm_transaction():
+def test_live_send_and_confirm_transaction(loaded_testnet_wallet):
     if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
         pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live transfer tests")
 
-    private_key_hex = HARDCODED_TEST_PRIVATE_KEY.strip()
-    if not private_key_hex:
-        private_key_hex = os.getenv("SYMBOL_TEST_PRIVATE_KEY", "").strip()
-    if not private_key_hex:
-        pytest.skip(
-            "Set HARDCODED_TEST_PRIVATE_KEY in tests/live_test_key.py "
-            "or SYMBOL_TEST_PRIVATE_KEY."
-        )
-
-    network_name = os.getenv("SYMBOL_TEST_NETWORK", "testnet")
+    wallet = loaded_testnet_wallet
     node_url = os.getenv(
-        "SYMBOL_TEST_NODE_URL", "http://sym-test-01.opening-line.jp:3000"
+        "SYMBOL_TEST_NODE_URL",
+        wallet.node_url,
     )
+    if node_url != wallet.node_url:
+        wallet.node_url = node_url
+        wallet._update_node_url(node_url)
+
     transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
     recipient_address_override = os.getenv("SYMBOL_TEST_RECIPIENT_ADDRESS", "").strip()
-    confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "180"))
-
-    wallet = Wallet(network_name=network_name)
-    wallet.network_name = network_name
-    wallet.node_url = node_url
-    wallet.facade = SymbolFacade(network_name)
-
-    wallet.private_key = PrivateKey(private_key_hex)
-    account = wallet.facade.create_account(wallet.private_key)
-    wallet.public_key = account.public_key
-    wallet.address = account.address
+    confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
     recipient_address = recipient_address_override or str(wallet.address)
 

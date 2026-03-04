@@ -1,4 +1,3 @@
-import pytest
 
 from src.shared.validation import (
     AddressValidator,
@@ -41,26 +40,31 @@ class TestAmountValidatorParseHumanAmount:
     def test_empty_string(self):
         result = AmountValidator.parse_human_amount("")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "required" in result.error_message.lower()
 
     def test_whitespace_only(self):
         result = AmountValidator.parse_human_amount("   ")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "required" in result.error_message.lower()
 
     def test_negative_amount(self):
         result = AmountValidator.parse_human_amount("-10")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "positive" in result.error_message.lower()
 
     def test_zero_amount(self):
         result = AmountValidator.parse_human_amount("0")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "zero" in result.error_message.lower()
 
     def test_invalid_characters(self):
         result = AmountValidator.parse_human_amount("abc")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "valid number" in result.error_message.lower()
 
     def test_multiple_decimals(self):
@@ -86,6 +90,7 @@ class TestAmountValidatorDecimalPlaces:
 
         result = AmountValidator.validate_decimal_places(Decimal("1.1234567"), 6)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "6" in result.error_message
 
     def test_zero_divisibility_with_decimal(self):
@@ -93,6 +98,7 @@ class TestAmountValidatorDecimalPlaces:
 
         result = AmountValidator.validate_decimal_places(Decimal("1.5"), 0)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "divisibility: 0" in result.error_message
 
     def test_zero_divisibility_no_decimal(self):
@@ -139,6 +145,7 @@ class TestAmountValidatorValidateAgainstBalance:
     def test_exceeds_balance(self):
         result = AmountValidator.validate_against_balance(200, 100)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "Insufficient" in result.error_message
 
 
@@ -151,11 +158,13 @@ class TestAmountValidatorValidateFull:
     def test_invalid_decimal_places(self):
         result = AmountValidator.validate_full("1.1234567", 6, 1_000_000_000)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "decimal" in result.error_message.lower()
 
     def test_insufficient_balance(self):
         result = AmountValidator.validate_full("100", 0, 50)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "Insufficient" in result.error_message
 
     def test_without_balance_check(self):
@@ -166,40 +175,59 @@ class TestAmountValidatorValidateFull:
 
 class TestAddressValidator:
     def test_valid_testnet_address(self):
-        result = AddressValidator.validate("TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA")
+        result = AddressValidator.validate("TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI")
         assert result.is_valid is True
         assert result.normalized_value.startswith("T")
 
     def test_valid_mainnet_address(self):
-        result = AddressValidator.validate("ND5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA")
+        result = AddressValidator.validate("NCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS72UNKDY")
         assert result.is_valid is True
         assert result.normalized_value.startswith("N")
 
     def test_address_with_dashes(self):
         result = AddressValidator.validate(
-            "TD5Z-P2WO-JKFM-GCVC-3GO3-2CQJ-SU6J-F3TZ-LOIJ-2HA"
+            "TCWY-XKVY-BMO4-NBCU-F3AX-KJMX-CGVS-YQOS-7ZG2-TLI"
         )
         assert result.is_valid is True
 
     def test_empty_address(self):
         result = AddressValidator.validate("")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "required" in result.error_message.lower()
 
     def test_short_address(self):
         result = AddressValidator.validate("TD5ZP2")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "short" in result.error_message.lower()
 
     def test_long_address(self):
-        result = AddressValidator.validate("TD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HAAAA")
+        result = AddressValidator.validate("TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLIAAAA")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "long" in result.error_message.lower()
 
     def test_invalid_starting_char(self):
-        result = AddressValidator.validate("AD5ZP2WOJKFMGCVC3GO32CQJSU6JF3TZLOIJ2HA")
+        result = AddressValidator.validate("ACWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLI")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "T" in result.error_message or "N" in result.error_message
+
+    def test_network_mismatch(self):
+        result = AddressValidator.validate(
+            "NCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS72UNKDY",
+            expected_network="testnet",
+        )
+        assert result.is_valid is False
+        assert result.error_message is not None
+        assert "mismatch" in result.error_message.lower()
+
+    def test_checksum_invalid(self):
+        result = AddressValidator.validate("TCWYXKVYBMO4NBCUF3AXKJMXCGVSYQOS7ZG2TLA")
+        assert result.is_valid is False
+        assert result.error_message is not None
+        assert "checksum" in result.error_message.lower()
 
 
 class TestMosaicIdValidator:
@@ -221,6 +249,7 @@ class TestMosaicIdValidator:
     def test_empty_string(self):
         result = MosaicIdValidator.validate("")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "required" in result.error_message.lower()
 
     def test_invalid_characters(self):
@@ -230,4 +259,5 @@ class TestMosaicIdValidator:
     def test_negative_integer(self):
         result = MosaicIdValidator.validate(-1)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "positive" in result.error_message.lower()

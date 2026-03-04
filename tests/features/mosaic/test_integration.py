@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import time
+import os
 
 import pytest
 
@@ -80,19 +80,8 @@ class TestMosaicServiceIntegration:
 
 @pytest.mark.integration
 class TestMosaicTransactionCreation:
-    """Integration tests for mosaic transaction creation (without announcing).
+    """Integration tests for mosaic transaction creation (without announcing)."""
 
-    Note: The wallet's create_mosaic_transaction currently has issues with the
-    'supply' attribute in the Symbol SDK. These tests are skipped until the
-    wallet code is updated to match the SDK's mosaic definition transaction format.
-
-    The TransactionManager.create_sign_and_announce_mosaic method works correctly
-    and is tested in the slow integration tests.
-    """
-
-    @pytest.mark.skip(
-        reason="Wallet create_mosaic_transaction has SDK compatibility issue"
-    )
     def test_create_mosaic_transaction_creates_transaction(self, loaded_testnet_wallet):
         mosaic_tx = loaded_testnet_wallet.create_mosaic_transaction(
             supply=1000,
@@ -104,9 +93,6 @@ class TestMosaicTransactionCreation:
         assert mosaic_tx is not None
         assert hasattr(mosaic_tx, "divisibility")
 
-    @pytest.mark.skip(
-        reason="Wallet create_mosaic_transaction has SDK compatibility issue"
-    )
     def test_create_mosaic_transaction_with_divisibility(self, loaded_testnet_wallet):
         mosaic_tx = loaded_testnet_wallet.create_mosaic_transaction(
             supply=1_000_000,
@@ -118,9 +104,6 @@ class TestMosaicTransactionCreation:
         assert mosaic_tx is not None
         assert mosaic_tx.divisibility == 3
 
-    @pytest.mark.skip(
-        reason="Wallet create_mosaic_transaction has SDK compatibility issue"
-    )
     def test_create_mosaic_transaction_flags(self, loaded_testnet_wallet):
         mosaic_tx = loaded_testnet_wallet.create_mosaic_transaction(
             supply=100,
@@ -131,11 +114,8 @@ class TestMosaicTransactionCreation:
         )
         assert mosaic_tx is not None
         expected_flags = 0x1 | 0x2 | 0x4
-        assert mosaic_tx.flags == expected_flags
+        assert mosaic_tx.flags.value == expected_flags
 
-    @pytest.mark.skip(
-        reason="Wallet create_mosaic_transaction has SDK compatibility issue"
-    )
     def test_create_mosaic_transaction_minimal_flags(self, loaded_testnet_wallet):
         mosaic_tx = loaded_testnet_wallet.create_mosaic_transaction(
             supply=100,
@@ -145,7 +125,7 @@ class TestMosaicTransactionCreation:
             revokable=False,
         )
         assert mosaic_tx is not None
-        assert mosaic_tx.flags == 0
+        assert mosaic_tx.flags.value == 0
 
 
 @pytest.mark.integration
@@ -157,7 +137,7 @@ class TestMosaicLiveTransaction:
     Run with: uv run pytest tests/features/mosaic/test_integration.py -m "integration and slow" -v
 
     Requirements:
-    - SYMBOL_TEST_PRIVATE_KEY environment variable with a funded testnet account
+    - test key via --test-key-file (recommended) or SYMBOL_TEST_PRIVATE_KEY
     - Account needs at least 1 XYM for mosaic creation test
     """
 
@@ -168,6 +148,7 @@ class TestMosaicLiveTransaction:
 
         wallet = loaded_testnet_wallet
         before = wallet.get_xym_balance()
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
         min_balance = 1_000_000
         if before["xym_micro"] < min_balance:
@@ -181,6 +162,8 @@ class TestMosaicLiveTransaction:
             transferable=True,
             supply_mutable=False,
             revokable=False,
+            confirmation_timeout_seconds=confirm_timeout,
+            mosaic_registration_timeout_seconds=confirm_timeout,
         )
 
         tx_hash = result["hash"]
@@ -188,7 +171,7 @@ class TestMosaicLiveTransaction:
 
         confirmed = wallet.wait_for_transaction_confirmation(
             tx_hash,
-            timeout_seconds=180,
+            timeout_seconds=confirm_timeout,
             poll_interval_seconds=5,
         )
         assert confirmed["group"] == "confirmed"
@@ -200,6 +183,7 @@ class TestMosaicLiveTransaction:
 
         wallet = loaded_testnet_wallet
         before = wallet.get_xym_balance()
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
         min_balance = 1_000_000
         if before["xym_micro"] < min_balance:
@@ -213,6 +197,8 @@ class TestMosaicLiveTransaction:
             transferable=True,
             supply_mutable=True,
             revokable=False,
+            confirmation_timeout_seconds=confirm_timeout,
+            mosaic_registration_timeout_seconds=confirm_timeout,
         )
 
         tx_hash = result["hash"]
@@ -220,7 +206,7 @@ class TestMosaicLiveTransaction:
 
         confirmed = wallet.wait_for_transaction_confirmation(
             tx_hash,
-            timeout_seconds=180,
+            timeout_seconds=confirm_timeout,
             poll_interval_seconds=5,
         )
         assert confirmed["group"] == "confirmed"
@@ -232,6 +218,7 @@ class TestMosaicLiveTransaction:
 
         wallet = loaded_testnet_wallet
         before = wallet.get_xym_balance()
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
         min_balance = 1_000_000
         if before["xym_micro"] < min_balance:
@@ -245,12 +232,14 @@ class TestMosaicLiveTransaction:
             transferable=True,
             supply_mutable=True,
             revokable=False,
+            confirmation_timeout_seconds=confirm_timeout,
+            mosaic_registration_timeout_seconds=confirm_timeout,
         )
 
         tx_hash = result["hash"]
         confirmed = wallet.wait_for_transaction_confirmation(
             tx_hash,
-            timeout_seconds=180,
+            timeout_seconds=confirm_timeout,
             poll_interval_seconds=5,
         )
         assert confirmed["group"] == "confirmed"

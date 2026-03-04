@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -56,18 +56,19 @@ class LockHandlersMixin:
             def on_button_pressed(self, event):
                 if not isinstance(event.button, Button):
                     return
+                app = cast("WalletApp", self.app)
                 button_id = event.button.id
                 if button_id == "create-secret-lock-btn":
-                    self.app.pop_screen()
-                    self.app.show_create_secret_lock()
+                    app.pop_screen()
+                    app.show_create_secret_lock()
                 elif button_id == "claim-secret-lock-btn":
-                    self.app.pop_screen()
-                    self.app.show_claim_secret_lock()
+                    app.pop_screen()
+                    app.show_claim_secret_lock()
                 elif button_id == "view-locks-btn":
-                    self.app.pop_screen()
-                    self.app.show_locks_overview()
+                    app.pop_screen()
+                    app.show_locks_overview()
                 elif button_id == "close-lock-menu-btn":
-                    self.app.pop_screen()
+                    app.pop_screen()
 
         self.push_screen(LockMenuScreen())
 

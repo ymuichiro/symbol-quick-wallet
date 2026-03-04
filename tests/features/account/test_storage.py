@@ -73,12 +73,14 @@ class TestWalletConfig:
             connect_timeout=10.0, read_timeout=30.0, operation_timeout=60.0
         )
         config = WalletConfig(timeout_config=timeout)
+        assert config.timeout_config is not None
         assert config.timeout_config.connect_timeout == 10.0
 
     @pytest.mark.unit
     def test_custom_retry_config(self):
         retry = RetryConfig(max_retries=5, base_delay=2.0, max_delay=60.0)
         config = WalletConfig(retry_config=retry)
+        assert config.retry_config is not None
         assert config.retry_config.max_retries == 5
 
 

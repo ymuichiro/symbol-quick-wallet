@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Any
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-from symbolchain.CryptoTypes import PrivateKey, PublicKey
+from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.features.lock.service import (
@@ -20,6 +20,7 @@ from src.features.lock.service import (
     SecretLockInfo,
     SecretProofPair,
 )
+from src.features.aggregate.service import AggregateService
 
 
 class MockWallet:
@@ -221,7 +222,7 @@ class TestLockService:
         ).timestamp
 
         aggregate_dict = {
-            "type": "aggregate_bonded_transaction_v1",
+            "type": "aggregate_bonded_transaction_v3",
             "signer_public_key": str(mock_wallet.public_key),
             "deadline": deadline_timestamp,
             "transactions": [],
@@ -333,82 +334,117 @@ class TestLockService:
         assert lock_service._normalize_address("  TBTWKXCN  ") == "TBTWKXCN"
 
 
-class TestLockServiceIntegration:
-    @pytest.fixture
-    def mock_wallet(self):
-        return MockWallet()
+@pytest.mark.integration
+class TestLockServiceReadIntegration:
+    FAUCET_ADDRESS = "TBGPWGP56HIAUYLNCPEKLSY6FLG3Y7YQZA43NZQ"
 
-    @pytest.fixture
-    def lock_service(self, mock_wallet):
-        return LockService(mock_wallet)
+    def test_fetch_secret_locks_real_node(self, testnet_wallet):
+        lock_service = LockService(testnet_wallet, testnet_wallet.node_url)
+        locks = lock_service.fetch_secret_locks(self.FAUCET_ADDRESS)
 
-    @pytest.mark.integration
-    def test_create_and_announce_secret_lock_mocked(self, lock_service):
-        with patch.object(lock_service, "announce_transaction") as mock_announce:
-            mock_announce.return_value = {"message": "success"}
+        assert isinstance(locks, list)
+        for lock in locks:
+            assert isinstance(lock, SecretLockInfo)
 
-            result = lock_service.create_and_announce_secret_lock(
-                recipient_address="TBTWKXCNROT65CJHEBPL7F6DRHX7UKSUPD7EUGA",
-                mosaic_id=0x72C0212E67A08BCE,
-                amount=1000000,
-                duration=480,
-                algorithm=LockHashAlgorithm.SHA3_256,
+    def test_fetch_hash_locks_real_node(self, testnet_wallet):
+        lock_service = LockService(testnet_wallet, testnet_wallet.node_url)
+        locks = lock_service.fetch_hash_locks(self.FAUCET_ADDRESS)
+
+        assert isinstance(locks, list)
+        for lock in locks:
+            assert isinstance(lock, HashLockInfo)
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+class TestLockServiceLiveIntegration:
+    def test_live_secret_lock_and_proof(self, loaded_testnet_wallet):
+        if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
+            pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live lock tests")
+
+        wallet = loaded_testnet_wallet
+        lock_amount = int(os.getenv("SYMBOL_TEST_SECRET_LOCK_MICRO", "1000000"))
+        before = wallet.get_xym_balance()
+        min_balance = lock_amount + 500_000
+        if before["xym_micro"] < min_balance:
+            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
+        lock_service = LockService(wallet, wallet.node_url)
+        mosaic_id = wallet.get_currency_mosaic_id() or 0x72C0212E67A08BCE
+
+        lock_result = lock_service.create_and_announce_secret_lock(
+            recipient_address=str(wallet.address),
+            mosaic_id=mosaic_id,
+            amount=lock_amount,
+            duration=480,
+            algorithm=LockHashAlgorithm.SHA3_256,
+        )
+        assert "hash" in lock_result
+        assert "secret" in lock_result
+        assert "proof" in lock_result
+        assert len(lock_result["hash"]) == 64
+
+        lock_status = lock_service.poll_for_transaction_status(
+            lock_result["hash"],
+            timeout_seconds=confirm_timeout,
+            poll_interval_seconds=5,
+        )
+        assert lock_status.get("group") == "confirmed"
+
+        proof_result = lock_service.create_and_announce_secret_proof(
+            recipient_address=str(wallet.address),
+            secret=lock_result["secret"],
+            proof=lock_result["proof"],
+            algorithm=LockHashAlgorithm.SHA3_256,
+        )
+        assert "hash" in proof_result
+        assert len(proof_result["hash"]) == 64
+
+        proof_status = lock_service.poll_for_transaction_status(
+            proof_result["hash"],
+            timeout_seconds=confirm_timeout,
+            poll_interval_seconds=5,
+        )
+        assert proof_status.get("group") == "confirmed"
+
+    def test_live_hash_lock_announce(self, loaded_testnet_wallet):
+        if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
+            pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live lock tests")
+
+        wallet = loaded_testnet_wallet
+        before = wallet.get_xym_balance()
+        min_balance = HASH_LOCK_AMOUNT + 500_000
+        if before["xym_micro"] < min_balance:
+            pytest.skip(
+                f"Insufficient balance: {before['xym_micro']} micro XYM (need {min_balance})"
             )
 
-            assert "hash" in result
-            assert "secret" in result
-            assert "proof" in result
-            assert "api_message" in result
-            mock_announce.assert_called_once()
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
+        aggregate_service = AggregateService(wallet, wallet.node_url)
+        embedded = aggregate_service.create_embedded_transfer(
+            signer_public_key=str(wallet.public_key),
+            recipient_address=str(wallet.address),
+            mosaics=[],
+            message=f"hash-lock-live-{int(time.time())}",
+        )
+        aggregate_bonded = aggregate_service.create_aggregate_bonded([embedded])
 
-    @pytest.mark.integration
-    def test_create_and_announce_secret_proof_mocked(self, lock_service):
-        pair = SecretProofPair.generate(LockHashAlgorithm.SHA3_256)
+        lock_service = LockService(wallet, wallet.node_url)
+        result = lock_service.create_and_announce_hash_lock(
+            aggregate_tx=aggregate_bonded,
+            lock_amount=HASH_LOCK_AMOUNT,
+            duration=HASH_LOCK_DURATION,
+        )
 
-        with patch.object(lock_service, "announce_transaction") as mock_announce:
-            mock_announce.return_value = {"message": "success"}
+        assert "hash" in result
+        assert "aggregate_hash" in result
+        assert result["lock_amount"] == HASH_LOCK_AMOUNT
+        assert len(result["hash"]) == 64
 
-            result = lock_service.create_and_announce_secret_proof(
-                recipient_address="TBTWKXCNROT65CJHEBPL7F6DRHX7UKSUPD7EUGA",
-                secret=pair.secret_hex,
-                proof=pair.proof_hex,
-                algorithm=LockHashAlgorithm.SHA3_256,
-            )
-
-            assert "hash" in result
-            assert "secret" in result
-            assert "proof" in result
-            assert "api_message" in result
-            mock_announce.assert_called_once()
-
-    @pytest.mark.integration
-    def test_create_and_announce_hash_lock_mocked(self, lock_service, mock_wallet):
-        from datetime import datetime, timezone, timedelta
-
-        deadline_timestamp = mock_wallet.facade.network.from_datetime(
-            datetime.now(timezone.utc) + timedelta(hours=2)
-        ).timestamp
-
-        aggregate_dict = {
-            "type": "aggregate_bonded_transaction_v1",
-            "signer_public_key": str(mock_wallet.public_key),
-            "deadline": deadline_timestamp,
-            "transactions": [],
-        }
-
-        aggregate_tx = mock_wallet.facade.transaction_factory.create(aggregate_dict)
-
-        with patch.object(lock_service, "announce_transaction") as mock_announce:
-            mock_announce.return_value = {"message": "success"}
-
-            result = lock_service.create_and_announce_hash_lock(
-                aggregate_tx=aggregate_tx,
-                lock_amount=HASH_LOCK_AMOUNT,
-                duration=HASH_LOCK_DURATION,
-            )
-
-            assert "hash" in result
-            assert "aggregate_hash" in result
-            assert "lock_amount" in result
-            assert result["lock_amount"] == HASH_LOCK_AMOUNT
-            mock_announce.assert_called_once()
+        status = lock_service.poll_for_transaction_status(
+            result["hash"],
+            timeout_seconds=confirm_timeout,
+            poll_interval_seconds=5,
+        )
+        assert status.get("group") == "confirmed"

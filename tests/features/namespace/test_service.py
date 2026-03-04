@@ -9,8 +9,8 @@ from src.shared.network import NetworkClient
 
 
 @pytest.fixture
-def network_client():
-    return NetworkClient(node_url="http://sym-test-01.opening-line.jp:3000")
+def network_client(testnet_node_url):
+    return NetworkClient(node_url=testnet_node_url)
 
 
 @pytest.fixture
@@ -186,23 +186,17 @@ class TestNamespaceResolution:
         info = namespace_service.fetch_namespace_info(fake_id)
         assert info is None
 
-    @pytest.mark.skip(
-        reason="Namespace ID generation algorithm needs verification with Symbol SDK"
-    )
     def test_resolve_symbol_xym_namespace(self, namespace_service):
         ns_id = namespace_service.get_namespace_id("symbol.xym")
         info = namespace_service.fetch_namespace_info(ns_id)
         assert info is not None
         assert info.has_mosaic_alias is True
-        assert info.alias_mosaic_id == 0x6BED913FA20223F8
+        assert info.alias_mosaic_id == 0x72C0212E67A08BCE
 
-    @pytest.mark.skip(
-        reason="Namespace ID generation algorithm needs verification with Symbol SDK"
-    )
     def test_resolve_namespace_to_mosaic_id(self, namespace_service):
         mosaic_id = namespace_service.resolve_namespace_to_mosaic_id("symbol.xym")
         assert mosaic_id is not None
-        assert mosaic_id == 0x6BED913FA20223F8
+        assert mosaic_id == 0x72C0212E67A08BCE
 
 
 @pytest.mark.integration

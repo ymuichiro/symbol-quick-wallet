@@ -18,6 +18,7 @@ from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.shared.logging import get_logger
 from src.shared.network import NetworkClient, NetworkError
+from src.shared.validation import AddressValidator
 
 logger = get_logger(__name__)
 
@@ -157,6 +158,14 @@ class LockService:
     def _normalize_address(self, address: str) -> str:
         return address.replace("-", "").strip().upper()
 
+    def _validate_recipient_address(self, address: str) -> str:
+        result = AddressValidator.validate(
+            address, expected_network=self.wallet.network_name
+        )
+        if not result.is_valid:
+            raise ValueError(result.error_message or "Invalid recipient address")
+        return str(result.normalized_value)
+
     def _get_deadline_timestamp(self, hours: int = 2) -> int:
         return self.facade.network.from_datetime(
             datetime.now(timezone.utc) + timedelta(hours=hours)
@@ -178,12 +187,13 @@ class LockService:
         fee_multiplier: int = 100,
     ) -> sc.Transaction:
         deadline_timestamp = self._get_deadline_timestamp()
+        normalized_recipient = self._validate_recipient_address(recipient_address)
 
         lock_dict = {
             "type": "secret_lock_transaction_v1",
             "signer_public_key": str(self.wallet.public_key),
             "deadline": deadline_timestamp,
-            "recipient_address": self._normalize_address(recipient_address),
+            "recipient_address": normalized_recipient,
             "secret": secret.hex(),
             "mosaic": {"mosaic_id": mosaic_id, "amount": amount},
             "duration": duration,
@@ -204,15 +214,16 @@ class LockService:
         fee_multiplier: int = 100,
     ) -> sc.Transaction:
         deadline_timestamp = self._get_deadline_timestamp()
+        normalized_recipient = self._validate_recipient_address(recipient_address)
 
         proof_dict = {
             "type": "secret_proof_transaction_v1",
             "signer_public_key": str(self.wallet.public_key),
             "deadline": deadline_timestamp,
-            "recipient_address": self._normalize_address(recipient_address),
+            "recipient_address": normalized_recipient,
             "secret": secret.hex(),
             "hash_algorithm": algorithm.value,
-            "proof": proof.hex(),
+            "proof": proof,
         }
 
         tx = self.facade.transaction_factory.create(proof_dict)

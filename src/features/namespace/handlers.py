@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
@@ -67,27 +67,28 @@ class NamespaceHandlersMixin:
 
                 if not isinstance(event.button, Button):
                     return
+                app = cast("WalletApp", self.app)
                 button_id = event.button.id
                 if button_id == "register-root-ns-btn":
-                    self.app.pop_screen()
-                    self.app.show_register_root_namespace()
+                    app.pop_screen()
+                    app.show_register_root_namespace()
                 elif button_id == "register-sub-ns-btn":
-                    self.app.pop_screen()
-                    self.app.show_register_sub_namespace()
+                    app.pop_screen()
+                    app.show_register_sub_namespace()
                 elif button_id == "link-addr-alias-btn":
-                    self.app.pop_screen()
-                    self.app.show_link_address_alias()
+                    app.pop_screen()
+                    app.show_link_address_alias()
                 elif button_id == "link-mosaic-alias-btn":
-                    self.app.pop_screen()
-                    self.app.show_link_mosaic_alias()
+                    app.pop_screen()
+                    app.show_link_mosaic_alias()
                 elif button_id == "resolve-ns-btn":
-                    self.app.pop_screen()
-                    self.app.show_resolve_namespace()
+                    app.pop_screen()
+                    app.show_resolve_namespace()
                 elif button_id == "view-my-ns-btn":
-                    self.app.pop_screen()
-                    self.app.show_my_namespaces()
+                    app.pop_screen()
+                    app.show_my_namespaces()
                 elif button_id == "close-ns-menu-btn":
-                    self.app.pop_screen()
+                    app.pop_screen()
 
         self.push_screen(NamespaceMenuScreen())
 

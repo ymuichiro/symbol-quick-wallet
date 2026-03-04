@@ -21,6 +21,12 @@ from src.shared.logging import get_logger
 logger = get_logger(__name__)
 
 
+EventCallback = Callable[[Any], None]
+ConnectedCallback = Callable[[], None]
+DisconnectedCallback = Callable[[], None]
+ErrorCallback = Callable[[Exception], None]
+
+
 class ListenerChannel(Enum):
     BLOCK = "block"
     CONFIRMED_ADDED = "confirmedAdded"
@@ -64,6 +70,12 @@ class TransactionStatusNotification:
     group: str
 
 
+TransactionCallback = Callable[[TransactionNotification], None]
+BlockCallback = Callable[[BlockNotification], None]
+CosignatureCallback = Callable[[CosignatureNotification], None]
+StatusCallback = Callable[[TransactionStatusNotification], None]
+
+
 @dataclass
 class MonitoringConfig:
     reconnect_delay: float = 5.0
@@ -80,45 +92,62 @@ class TransactionMonitor:
         self,
         node_url: str,
         config: MonitoringConfig | None = None,
-        on_connected: Callable[[], None] | None = None,
-        on_disconnected: Callable[[], None] | None = None,
-        on_error: Callable[[Exception], None] | None = None,
-        on_confirmed_transaction: Callable[[TransactionNotification], None]
-        | None = None,
-        on_unconfirmed_transaction: Callable[[TransactionNotification], None]
-        | None = None,
-        on_partial_transaction: Callable[[TransactionNotification], None] | None = None,
-        on_block: Callable[[BlockNotification], None] | None = None,
-        on_finalized_block: Callable[[BlockNotification], None] | None = None,
-        on_cosignature: Callable[[CosignatureNotification], None] | None = None,
-        on_transaction_status: Callable[[TransactionStatusNotification], None]
-        | None = None,
+        on_connected: ConnectedCallback | None = None,
+        on_disconnected: DisconnectedCallback | None = None,
+        on_error: ErrorCallback | None = None,
+        on_confirmed_transaction: TransactionCallback | None = None,
+        on_unconfirmed_transaction: TransactionCallback | None = None,
+        on_partial_transaction: TransactionCallback | None = None,
+        on_block: BlockCallback | None = None,
+        on_finalized_block: BlockCallback | None = None,
+        on_cosignature: CosignatureCallback | None = None,
+        on_transaction_status: StatusCallback | None = None,
     ):
         self.node_url = node_url.rstrip("/")
         self.ws_url = self._build_ws_url(node_url)
         self.config = config or MonitoringConfig()
 
-        self._callbacks: dict[str, list[Callable[[Any], None]]] = {
-            "on_connected": [on_connected] if on_connected else [],
-            "on_disconnected": [on_disconnected] if on_disconnected else [],
-            "on_error": [on_error] if on_error else [],
-            ListenerChannel.CONFIRMED_ADDED.value: [on_confirmed_transaction]
+        self._callbacks: dict[str, list[EventCallback]] = {
+            "on_connected": (
+                [self._wrap_connected_callback(on_connected)] if on_connected else []
+            ),
+            "on_disconnected": (
+                [self._wrap_disconnected_callback(on_disconnected)]
+                if on_disconnected
+                else []
+            ),
+            "on_error": [self._wrap_error_callback(on_error)] if on_error else [],
+            ListenerChannel.CONFIRMED_ADDED.value: [
+                self._wrap_transaction_callback(on_confirmed_transaction)
+            ]
             if on_confirmed_transaction
             else [],
-            ListenerChannel.UNCONFIRMED_ADDED.value: [on_unconfirmed_transaction]
+            ListenerChannel.UNCONFIRMED_ADDED.value: [
+                self._wrap_transaction_callback(on_unconfirmed_transaction)
+            ]
             if on_unconfirmed_transaction
             else [],
-            ListenerChannel.PARTIAL_ADDED.value: [on_partial_transaction]
+            ListenerChannel.PARTIAL_ADDED.value: [
+                self._wrap_transaction_callback(on_partial_transaction)
+            ]
             if on_partial_transaction
             else [],
-            ListenerChannel.BLOCK.value: [on_block] if on_block else [],
-            ListenerChannel.FINALIZED_BLOCK.value: [on_finalized_block]
-            if on_finalized_block
-            else [],
-            ListenerChannel.COSIGNATURE.value: [on_cosignature]
-            if on_cosignature
-            else [],
-            ListenerChannel.STATUS.value: [on_transaction_status]
+            ListenerChannel.BLOCK.value: (
+                [self._wrap_block_callback(on_block)] if on_block else []
+            ),
+            ListenerChannel.FINALIZED_BLOCK.value: (
+                [self._wrap_block_callback(on_finalized_block)]
+                if on_finalized_block
+                else []
+            ),
+            ListenerChannel.COSIGNATURE.value: (
+                [self._wrap_cosignature_callback(on_cosignature)]
+                if on_cosignature
+                else []
+            ),
+            ListenerChannel.STATUS.value: [
+                self._wrap_status_callback(on_transaction_status)
+            ]
             if on_transaction_status
             else [],
         }
@@ -151,12 +180,68 @@ class TransactionMonitor:
 
         return f"{url}/ws"
 
-    def add_callback(self, event_type: str, callback: Callable[[Any], None]) -> None:
+    @staticmethod
+    def _wrap_connected_callback(callback: ConnectedCallback) -> EventCallback:
+        def wrapped(_: Any) -> None:
+            callback()
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_disconnected_callback(callback: DisconnectedCallback) -> EventCallback:
+        def wrapped(_: Any) -> None:
+            callback()
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_error_callback(callback: ErrorCallback) -> EventCallback:
+        def wrapped(data: Any) -> None:
+            if isinstance(data, Exception):
+                callback(data)
+            else:
+                callback(Exception(str(data)))
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_transaction_callback(callback: TransactionCallback) -> EventCallback:
+        def wrapped(data: Any) -> None:
+            if isinstance(data, TransactionNotification):
+                callback(data)
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_block_callback(callback: BlockCallback) -> EventCallback:
+        def wrapped(data: Any) -> None:
+            if isinstance(data, BlockNotification):
+                callback(data)
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_cosignature_callback(callback: CosignatureCallback) -> EventCallback:
+        def wrapped(data: Any) -> None:
+            if isinstance(data, CosignatureNotification):
+                callback(data)
+
+        return wrapped
+
+    @staticmethod
+    def _wrap_status_callback(callback: StatusCallback) -> EventCallback:
+        def wrapped(data: Any) -> None:
+            if isinstance(data, TransactionStatusNotification):
+                callback(data)
+
+        return wrapped
+
+    def add_callback(self, event_type: str, callback: EventCallback) -> None:
         if event_type not in self._callbacks:
             self._callbacks[event_type] = []
         self._callbacks[event_type].append(callback)
 
-    def remove_callback(self, event_type: str, callback: Callable[[Any], None]) -> None:
+    def remove_callback(self, event_type: str, callback: EventCallback) -> None:
         if event_type in self._callbacks:
             try:
                 self._callbacks[event_type].remove(callback)
@@ -264,7 +349,21 @@ class TransactionMonitor:
 
     def _on_ws_error(self, ws, error) -> None:
         logger.error("WebSocket error: %s", error)
-        self._invoke_callbacks("on_error", error)
+        error_obj = error if isinstance(error, Exception) else Exception(str(error))
+        if self._should_upgrade_to_secure_ws(error_obj):
+            secure_url = self.ws_url.replace("ws://", "wss://", 1)
+            if secure_url != self.ws_url:
+                logger.warning(
+                    "WebSocket endpoint appears to require TLS, switching URL: %s",
+                    secure_url,
+                )
+                self.ws_url = secure_url
+        self._invoke_callbacks("on_error", error_obj)
+
+    @staticmethod
+    def _should_upgrade_to_secure_ws(error: Exception) -> bool:
+        message = str(error).lower()
+        return message.startswith("handshake status 400") and "https port" in message
 
     def _on_ws_close(self, ws, close_status_code, close_msg) -> None:
         logger.info("WebSocket closed: code=%s, msg=%s", close_status_code, close_msg)

@@ -24,6 +24,7 @@ from src.shared.network import NetworkError
 from src.shared.protocols import WalletProtocol
 from src.shared.transaction_queue import QueuedTransaction, TransactionQueue
 from src.shared.transaction_template import TemplateStorage, TransactionTemplate
+from src.shared.validation import AddressValidator
 from src.transaction import TransactionManager
 
 if TYPE_CHECKING:
@@ -101,6 +102,15 @@ class TransferHandlersMixin:
             result.update("[red]Error: Please fill recipient address[/red]")
             return
 
+        address_result = AddressValidator.validate(
+            recipient, expected_network=self.wallet.network_name
+        )
+        if not address_result.is_valid:
+            result.update(
+                f"[red]Error: {address_result.error_message or 'Invalid recipient address'}[/red]"
+            )
+            return
+
         if not self.mosaics:
             result.update(
                 "[red]Error: Please add at least one mosaic using the + button[/red]"
@@ -109,9 +119,12 @@ class TransferHandlersMixin:
 
         try:
             tm = TransactionManager(self.wallet, self.wallet.node_url)
-            fee = tm.estimate_fee(recipient, self.mosaics, message)
+            normalized_recipient = cast(str, address_result.normalized_value)
+            fee = tm.estimate_fee(normalized_recipient, self.mosaics, message)
             self.push_screen(
-                TransactionConfirmScreen(recipient, self.mosaics, message, fee),
+                TransactionConfirmScreen(
+                    normalized_recipient, self.mosaics, message, fee
+                ),
                 self._on_transaction_confirmed,
             )
         except ValueError as e:
@@ -248,6 +261,15 @@ class TransferHandlersMixin:
             result.update("[red]Error: Please fill recipient address[/red]")
             return
 
+        address_result = AddressValidator.validate(
+            recipient, expected_network=self.wallet.network_name
+        )
+        if not address_result.is_valid:
+            result.update(
+                f"[red]Error: {address_result.error_message or 'Invalid recipient address'}[/red]"
+            )
+            return
+
         if not self.mosaics:
             result.update(
                 "[red]Error: Please add at least one mosaic using the + button[/red]"
@@ -256,10 +278,11 @@ class TransferHandlersMixin:
 
         try:
             tm = TransactionManager(self.wallet, self.wallet.node_url)
-            fee = tm.estimate_fee(recipient, self.mosaics, message)
+            normalized_recipient = cast(str, address_result.normalized_value)
+            fee = tm.estimate_fee(normalized_recipient, self.mosaics, message)
 
             queued_tx = QueuedTransaction(
-                recipient=recipient,
+                recipient=normalized_recipient,
                 mosaics=self.mosaics.copy(),
                 message=message,
                 estimated_fee=fee,

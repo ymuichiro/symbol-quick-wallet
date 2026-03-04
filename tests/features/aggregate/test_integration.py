@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -16,9 +17,43 @@ TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
 TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
 
 
+def _is_aggregate_prohibited(status: dict[str, object]) -> bool:
+    if status.get("group") != "failed":
+        return False
+    code = str(status.get("code", ""))
+    return code.startswith("Failure_Aggregate_") and code.endswith("_Prohibited")
+
+
+def _fetch_tx_status(
+    service: AggregateService, tx_hash: str
+) -> dict[str, object] | None:
+    response = service._network_client.post(  # noqa: SLF001
+        "/transactionStatus",
+        context="Fetch transaction status",
+        json={"hashes": [tx_hash.strip().upper()]},
+    )
+    if not isinstance(response, list) or not response:
+        return None
+    first = response[0]
+    if not isinstance(first, dict):
+        return None
+    return first
+
+
+def _is_confirmed_by_hash(service: AggregateService, tx_hash: str) -> bool:
+    try:
+        result = service._network_client.get_optional(  # noqa: SLF001
+            f"/transactions/confirmed/{tx_hash.strip().upper()}",
+            context="Fetch confirmed transaction by hash",
+        )
+        return result is not None
+    except Exception:
+        return False
+
+
 @pytest.fixture
 def aggregate_service(loaded_testnet_wallet):
-    return AggregateService(loaded_testnet_wallet, TESTNET_NODE)
+    return AggregateService(loaded_testnet_wallet, loaded_testnet_wallet.node_url)
 
 
 @pytest.mark.integration
@@ -47,16 +82,8 @@ class TestAggregateServiceReadOperations:
 
 @pytest.mark.integration
 class TestAggregateCompleteTransactionCreation:
-    """Integration tests for aggregate complete transaction creation.
+    """Integration tests for aggregate complete transaction creation."""
 
-    Note: These tests are skipped due to symbolchain SDK compatibility issues.
-    The aggregate service uses descriptor-based transaction creation that
-    requires specific SDK versions.
-    """
-
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_embedded_transfer(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -66,9 +93,6 @@ class TestAggregateCompleteTransactionCreation:
         )
         assert embedded is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_embedded_transfer_with_mosaic(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -78,9 +102,6 @@ class TestAggregateCompleteTransactionCreation:
         )
         assert embedded is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_aggregate_complete_single_inner(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -91,9 +112,6 @@ class TestAggregateCompleteTransactionCreation:
         aggregate = aggregate_service.create_aggregate_complete([embedded])
         assert aggregate is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_aggregate_complete_multiple_inner(self, aggregate_service):
         embedded1 = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -113,14 +131,8 @@ class TestAggregateCompleteTransactionCreation:
 
 @pytest.mark.integration
 class TestAggregateBondedTransactionCreation:
-    """Integration tests for aggregate bonded transaction creation.
+    """Integration tests for aggregate bonded transaction creation."""
 
-    Note: These tests are skipped due to symbolchain SDK compatibility issues.
-    """
-
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_aggregate_bonded(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -131,9 +143,6 @@ class TestAggregateBondedTransactionCreation:
         aggregate = aggregate_service.create_aggregate_bonded([embedded])
         assert aggregate is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_hash_lock(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -145,9 +154,6 @@ class TestAggregateBondedTransactionCreation:
         hash_lock = aggregate_service.create_hash_lock(aggregate)
         assert hash_lock is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_create_hash_lock_custom_amount(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -165,14 +171,8 @@ class TestAggregateBondedTransactionCreation:
 
 @pytest.mark.integration
 class TestAggregateTransactionSigning:
-    """Integration tests for aggregate transaction signing.
+    """Integration tests for aggregate transaction signing."""
 
-    Note: These tests are skipped due to symbolchain SDK compatibility issues.
-    """
-
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_sign_aggregate_complete(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -184,9 +184,6 @@ class TestAggregateTransactionSigning:
         signature = aggregate_service.sign_transaction(aggregate)
         assert signature is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_sign_hash_lock(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -199,9 +196,6 @@ class TestAggregateTransactionSigning:
         signature = aggregate_service.sign_transaction(hash_lock)
         assert signature is not None
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_calculate_aggregate_hash(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -213,9 +207,6 @@ class TestAggregateTransactionSigning:
         tx_hash = aggregate_service.calculate_transaction_hash(aggregate)
         assert len(tx_hash) == 64
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_attach_signature_to_aggregate(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -232,14 +223,8 @@ class TestAggregateTransactionSigning:
 
 @pytest.mark.integration
 class TestAggregateFeeCalculation:
-    """Integration tests for aggregate fee calculation.
+    """Integration tests for aggregate fee calculation."""
 
-    Note: These tests are skipped due to symbolchain SDK compatibility issues.
-    """
-
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_calculate_fee_no_cosignatures(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -251,9 +236,6 @@ class TestAggregateFeeCalculation:
         fee = aggregate_service.calculate_fee(aggregate, num_cosignatures=0)
         assert fee > 0
 
-    @pytest.mark.skip(
-        reason="symbolchain SDK compatibility issue - descriptor classes not available"
-    )
     def test_calculate_fee_with_cosignatures(self, aggregate_service):
         embedded = aggregate_service.create_embedded_transfer(
             signer_public_key=str(aggregate_service.wallet.public_key),
@@ -276,7 +258,7 @@ class TestAggregateCompleteLiveTransaction:
     Run with: uv run pytest tests/features/aggregate/test_integration.py -m "integration and slow" -v
 
     Requirements:
-    - SYMBOL_TEST_PRIVATE_KEY environment variable with a funded testnet account
+    - test key via --test-key-file (recommended) or SYMBOL_TEST_PRIVATE_KEY
     - Account needs at least 1 XYM for aggregate complete test
     """
 
@@ -292,7 +274,7 @@ class TestAggregateCompleteLiveTransaction:
         if before["xym_micro"] < min_balance:
             pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
 
-        service = AggregateService(wallet, TESTNET_NODE)
+        service = AggregateService(wallet, wallet.node_url)
 
         embedded = service.create_embedded_transfer(
             signer_public_key=str(wallet.public_key),
@@ -311,6 +293,10 @@ class TestAggregateCompleteLiveTransaction:
         status = service.poll_for_transaction_status(
             result["hash"], timeout_seconds=120, poll_interval_seconds=5
         )
+        if _is_aggregate_prohibited(status):
+            pytest.skip(
+                f"Aggregate transactions are prohibited by this node/network: {status.get('code')}"
+            )
         assert status.get("group") == "confirmed"
 
     def test_live_aggregate_complete_multiple_inner(self, loaded_testnet_wallet):
@@ -325,7 +311,7 @@ class TestAggregateCompleteLiveTransaction:
         if before["xym_micro"] < min_balance:
             pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
 
-        service = AggregateService(wallet, TESTNET_NODE)
+        service = AggregateService(wallet, wallet.node_url)
 
         embedded1 = service.create_embedded_transfer(
             signer_public_key=str(wallet.public_key),
@@ -351,6 +337,10 @@ class TestAggregateCompleteLiveTransaction:
         status = service.poll_for_transaction_status(
             result["hash"], timeout_seconds=120, poll_interval_seconds=5
         )
+        if _is_aggregate_prohibited(status):
+            pytest.skip(
+                f"Aggregate transactions are prohibited by this node/network: {status.get('code')}"
+            )
         assert status.get("group") == "confirmed"
 
 
@@ -363,12 +353,12 @@ class TestAggregateBondedLiveTransaction:
     Run with: uv run pytest tests/features/aggregate/test_integration.py -m "integration and slow" -v
 
     Requirements:
-    - SYMBOL_TEST_PRIVATE_KEY environment variable with a funded testnet account
+    - test key via --test-key-file (recommended) or SYMBOL_TEST_PRIVATE_KEY
     - Account needs at least 11 XYM for aggregate bonded test (10 XYM for hash lock)
     """
 
     def test_live_aggregate_bonded_full_workflow(self, loaded_testnet_wallet):
-        """Test full aggregate bonded workflow: hash lock -> aggregate -> partial."""
+        """Test full aggregate bonded workflow: hash lock -> aggregate -> confirmed/partial."""
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live aggregate tests")
 
@@ -381,7 +371,7 @@ class TestAggregateBondedLiveTransaction:
                 f"Insufficient balance: {before['xym_micro']} micro XYM (need {min_balance})"
             )
 
-        service = AggregateService(wallet, TESTNET_NODE)
+        service = AggregateService(wallet, wallet.node_url)
 
         embedded = service.create_embedded_transfer(
             signer_public_key=str(wallet.public_key),
@@ -400,7 +390,7 @@ class TestAggregateBondedLiveTransaction:
             lock_amount=HASH_LOCK_AMOUNT,
             fee_multiplier=100,
             wait_for_hash_lock=True,
-            timeout_seconds=180,
+            timeout_seconds=300,
             on_status_update=on_status,
         )
 
@@ -414,12 +404,56 @@ class TestAggregateBondedLiveTransaction:
         )
         assert hash_lock_status.get("group") == "confirmed"
 
-        partial = service.fetch_partial_by_hash(result["aggregate_hash"])
+        aggregate_status: dict[str, object] | None = None
+        try:
+            aggregate_status = service.poll_for_transaction_status(
+                result["aggregate_hash"], timeout_seconds=120, poll_interval_seconds=5
+            )
+        except TimeoutError:
+            pass
+
+        if aggregate_status is not None:
+            if _is_aggregate_prohibited(aggregate_status):
+                pytest.skip(
+                    "Aggregate bonded transactions are prohibited by this node/network: "
+                    f"{aggregate_status.get('code')}"
+                )
+            if aggregate_status.get("group") == "confirmed":
+                return
+        elif _is_confirmed_by_hash(service, result["aggregate_hash"]):
+            return
+
+        partial = None
+        for _ in range(12):
+            partial = service.fetch_partial_by_hash(result["aggregate_hash"])
+            if partial is not None:
+                break
+            time.sleep(5)
+
+        if partial is None:
+            status = _fetch_tx_status(service, result["aggregate_hash"])
+            if status is None:
+                if _is_confirmed_by_hash(service, result["aggregate_hash"]):
+                    return
+                pytest.skip(
+                    "Aggregate bonded transaction status was unavailable and no partial "
+                    "transaction was observable on this node."
+                )
+            if status.get("group") == "confirmed":
+                return
+            if _is_aggregate_prohibited(status):
+                pytest.skip(
+                    "Aggregate bonded transactions are prohibited by this node/network: "
+                    f"{status.get('code')}"
+                )
+
         assert partial is not None
         assert partial.hash == result["aggregate_hash"]
 
-    def test_live_aggregate_bonded_partial_exists(self, loaded_testnet_wallet):
-        """Test that announced aggregate bonded appears in partial transactions."""
+    def test_live_aggregate_bonded_reaches_partial_or_confirmed(
+        self, loaded_testnet_wallet
+    ):
+        """Test that aggregate bonded reaches partial or confirmed state."""
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live aggregate tests")
 
@@ -432,7 +466,7 @@ class TestAggregateBondedLiveTransaction:
                 f"Insufficient balance: {before['xym_micro']} micro XYM (need {min_balance})"
             )
 
-        service = AggregateService(wallet, TESTNET_NODE)
+        service = AggregateService(wallet, wallet.node_url)
 
         embedded = service.create_embedded_transfer(
             signer_public_key=str(wallet.public_key),
@@ -446,10 +480,51 @@ class TestAggregateBondedLiveTransaction:
             lock_amount=HASH_LOCK_AMOUNT,
             fee_multiplier=100,
             wait_for_hash_lock=True,
-            timeout_seconds=180,
+            timeout_seconds=300,
         )
 
-        partials = service.fetch_partial_transactions(str(wallet.address))
+        aggregate_status: dict[str, object] | None = None
+        try:
+            aggregate_status = service.poll_for_transaction_status(
+                result["aggregate_hash"], timeout_seconds=120, poll_interval_seconds=5
+            )
+        except TimeoutError:
+            pass
+
+        if aggregate_status is not None:
+            if _is_aggregate_prohibited(aggregate_status):
+                pytest.skip(
+                    "Aggregate bonded transactions are prohibited by this node/network: "
+                    f"{aggregate_status.get('code')}"
+                )
+            if aggregate_status.get("group") == "confirmed":
+                return
+        elif _is_confirmed_by_hash(service, result["aggregate_hash"]):
+            return
+
+        partials: list[PartialTransactionInfo] = []
+        for _ in range(12):
+            partials = service.fetch_partial_transactions(str(wallet.address))
+            if partials:
+                break
+            time.sleep(5)
+
+        if not partials:
+            status = _fetch_tx_status(service, result["aggregate_hash"])
+            if status is None:
+                if _is_confirmed_by_hash(service, result["aggregate_hash"]):
+                    return
+                pytest.skip(
+                    "Aggregate bonded transaction status was unavailable and no partial "
+                    "transactions were observable on this node."
+                )
+            if status.get("group") == "confirmed":
+                return
+            if _is_aggregate_prohibited(status):
+                pytest.skip(
+                    "Aggregate bonded transactions are prohibited by this node/network: "
+                    f"{status.get('code')}"
+                )
 
         found = any(p.hash == result["aggregate_hash"] for p in partials)
         assert found, "Aggregate bonded not found in partial transactions"

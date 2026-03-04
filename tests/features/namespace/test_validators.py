@@ -1,11 +1,9 @@
 """Tests for namespace validators."""
 
-import pytest
 
 from src.features.namespace.validators import (
     MAX_NAMESPACE_LENGTH,
     NamespaceValidator,
-    ValidationResult,
 )
 
 
@@ -33,6 +31,7 @@ class TestNamespaceValidator:
     def test_validate_name_empty(self):
         result = NamespaceValidator.validate_name("")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "required" in result.error_message.lower()
 
     def test_validate_name_whitespace_only(self):
@@ -48,21 +47,25 @@ class TestNamespaceValidator:
         long_name = "a" * (MAX_NAMESPACE_LENGTH + 1)
         result = NamespaceValidator.validate_name(long_name)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "exceeds" in result.error_message.lower()
 
     def test_validate_name_invalid_chars(self):
         result = NamespaceValidator.validate_name("my@namespace")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "a-z" in result.error_message.lower()
 
     def test_validate_name_starts_with_hyphen(self):
         result = NamespaceValidator.validate_name("-mynamespace")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "start" in result.error_message.lower()
 
     def test_validate_name_ends_with_hyphen(self):
         result = NamespaceValidator.validate_name("mynamespace-")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "end" in result.error_message.lower()
 
     def test_validate_full_name_single_level(self):
@@ -83,6 +86,7 @@ class TestNamespaceValidator:
     def test_validate_full_name_too_many_levels(self):
         result = NamespaceValidator.validate_full_name("a.b.c.d")
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "3" in result.error_message
 
     def test_validate_full_name_empty(self):
@@ -101,11 +105,13 @@ class TestNamespaceValidator:
     def test_validate_duration_below_minimum(self):
         result = NamespaceValidator.validate_duration(29)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "30" in result.error_message
 
     def test_validate_duration_above_maximum(self):
         result = NamespaceValidator.validate_duration(1826)
         assert result.is_valid is False
+        assert result.error_message is not None
         assert "1825" in result.error_message
 
     def test_validate_duration_365_days(self):

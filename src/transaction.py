@@ -10,7 +10,7 @@ from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.shared.logging import get_logger
 from src.shared.network import NetworkClient, NetworkError
-from src.shared.validation import AmountValidator, MosaicIdValidator
+from src.shared.validation import AddressValidator, AmountValidator, MosaicIdValidator
 
 logger = get_logger(__name__)
 
@@ -19,6 +19,7 @@ class TransactionManager:
     XYM_MOSAIC_ID = 0x6BED913FA20223F8
     MESSAGE_MAX_BYTES = 1023
     DEFAULT_FEE_MULTIPLIER = 100
+    AGGREGATE_COMPLETE_TYPE = "aggregate_complete_transaction_v3"
 
     def __init__(self, wallet, node_url="http://sym-test-01.opening-line.jp:3000"):
         self.wallet = wallet
@@ -97,6 +98,12 @@ class TransactionManager:
 
     def create_transfer_transaction(self, recipient_address, mosaics, message=""):
         self._require_wallet_loaded()
+        validated_address = AddressValidator.validate(
+            recipient_address, expected_network=self.wallet.network_name
+        )
+        if not validated_address.is_valid:
+            raise ValueError(validated_address.error_message or "Invalid recipient")
+
         deadline_timestamp = self.facade.network.from_datetime(
             datetime.now(timezone.utc) + timedelta(hours=2)
         ).timestamp
@@ -105,7 +112,7 @@ class TransactionManager:
             "type": "transfer_transaction_v1",
             "signer_public_key": str(self.wallet.public_key),
             "deadline": deadline_timestamp,
-            "recipient_address": self._normalize_address(recipient_address),
+            "recipient_address": validated_address.normalized_value,
             "mosaics": self.normalize_mosaics(mosaics),
             "message": self._normalize_message(message),
         }
@@ -235,6 +242,19 @@ class TransactionManager:
             f"Transaction status not found within {timeout_seconds} seconds: {normalized_hash}"
         )
 
+    def wait_for_transaction_status(
+        self,
+        tx_hash: str,
+        timeout_seconds: int = 180,
+        poll_interval_seconds: int = 3,
+    ) -> dict[str, Any]:
+        """Backward-compatible alias for polling transaction status."""
+        return self.poll_for_transaction_status(
+            tx_hash,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
     def create_sign_and_announce_link_harvesting(self, remote_public_key):
         link_tx = self.wallet.link_harvesting_account(remote_public_key)
         result = self._sign_attach_and_announce(link_tx)
@@ -254,17 +274,82 @@ class TransactionManager:
         transferable=True,
         supply_mutable=False,
         revokable=False,
+        duration_blocks: int = 1000,
+        confirmation_timeout_seconds: int = 180,
+        poll_interval_seconds: int = 5,
+        mosaic_registration_timeout_seconds: int = 60,
     ):
-        mosaic_tx = self.wallet.create_mosaic_transaction(
+        definition_tx = self.wallet.create_mosaic_transaction(
             supply,
             divisibility,
             transferable,
             supply_mutable,
             revokable,
+            duration_blocks,
         )
-        result = self._sign_attach_and_announce(mosaic_tx)
-        logger.info("Mosaic creation transaction sent: supply=%s", supply)
-        return result
+
+        definition_result = self._sign_attach_and_announce(definition_tx)
+        definition_status = self.poll_for_transaction_status(
+            definition_result["hash"],
+            timeout_seconds=confirmation_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+        if definition_status.get("group") != "confirmed":
+            raise Exception(
+                "Mosaic definition failed: "
+                f"{definition_status.get('code', 'unknown')}"
+            )
+
+        raw_mosaic_id = getattr(definition_tx, "id", None)
+        if raw_mosaic_id is None:
+            raise Exception("Mosaic definition did not expose mosaic id")
+
+        mosaic_id = int(
+            raw_mosaic_id.value if hasattr(raw_mosaic_id, "value") else raw_mosaic_id
+        )
+        self._wait_for_mosaic_registration(
+            mosaic_id,
+            timeout_seconds=mosaic_registration_timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+        supply_tx = self.wallet.create_mosaic_supply_change_transaction(
+            mosaic_id=mosaic_id,
+            supply_delta=int(supply),
+            increase=True,
+        )
+        supply_result = self._sign_attach_and_announce(supply_tx)
+
+        logger.info(
+            "Mosaic creation transactions sent: definition_hash=%s supply_hash=%s mosaic_id=%s supply=%s",
+            definition_result["hash"],
+            supply_result["hash"],
+            hex(mosaic_id),
+            supply,
+        )
+        return {
+            **supply_result,
+            "definition_hash": definition_result["hash"],
+            "mosaic_id": hex(mosaic_id),
+        }
+
+    def _wait_for_mosaic_registration(
+        self,
+        mosaic_id: int,
+        timeout_seconds: int = 180,
+        poll_interval_seconds: int = 3,
+    ) -> None:
+        """Wait until a newly defined mosaic becomes visible via mosaic info API."""
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            info = self.wallet.get_mosaic_info(mosaic_id)
+            if info:
+                return
+            time.sleep(poll_interval_seconds)
+
+        raise TimeoutError(
+            f"Mosaic {hex(mosaic_id)} was not visible within {timeout_seconds} seconds"
+        )
 
     def create_sign_and_announce_root_namespace(
         self,
@@ -412,15 +497,15 @@ class TransactionManager:
         value: bytes,
         value_size_delta: int,
     ) -> sc.EmbeddedTransaction:
-        descriptor = sc.AccountMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
-            target_address=sc.Address(self._normalize_address(target_address)),
-            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
-            value_size_delta=value_size_delta,
-            value=value,
-        )
-        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
-            descriptor, sc.PublicKey(signer_public_key)
-        )
+        metadata_dict = {
+            "type": "account_metadata_transaction_v1",
+            "signer_public_key": signer_public_key,
+            "target_address": self._normalize_address(target_address),
+            "scoped_metadata_key": scoped_metadata_key,
+            "value_size_delta": value_size_delta,
+            "value": value,
+        }
+        return self.facade.transaction_factory.create_embedded(metadata_dict)
 
     def create_embedded_mosaic_metadata(
         self,
@@ -431,16 +516,16 @@ class TransactionManager:
         value: bytes,
         value_size_delta: int,
     ) -> sc.EmbeddedTransaction:
-        descriptor = sc.MosaicMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
-            target_address=sc.Address(self._normalize_address(target_address)),
-            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
-            target_mosaic_id=sc.UnresolvedMosaicId(mosaic_id),
-            value_size_delta=value_size_delta,
-            value=value,
-        )
-        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
-            descriptor, sc.PublicKey(signer_public_key)
-        )
+        metadata_dict = {
+            "type": "mosaic_metadata_transaction_v1",
+            "signer_public_key": signer_public_key,
+            "target_address": self._normalize_address(target_address),
+            "target_mosaic_id": mosaic_id,
+            "scoped_metadata_key": scoped_metadata_key,
+            "value_size_delta": value_size_delta,
+            "value": value,
+        }
+        return self.facade.transaction_factory.create_embedded(metadata_dict)
 
     def create_embedded_namespace_metadata(
         self,
@@ -451,16 +536,16 @@ class TransactionManager:
         value: bytes,
         value_size_delta: int,
     ) -> sc.EmbeddedTransaction:
-        descriptor = sc.NamespaceMetadataTransactionV1Descriptor(  # type: ignore[union-attr]
-            target_address=sc.Address(self._normalize_address(target_address)),
-            scoped_metadata_key=sc.ScopedMetadataKey(scoped_metadata_key),  # type: ignore[union-attr]
-            target_namespace_id=sc.NamespaceId(namespace_id),
-            value_size_delta=value_size_delta,
-            value=value,
-        )
-        return self.facade.create_embedded_transaction_from_descriptor(  # type: ignore[union-attr]
-            descriptor, sc.PublicKey(signer_public_key)
-        )
+        metadata_dict = {
+            "type": "namespace_metadata_transaction_v1",
+            "signer_public_key": signer_public_key,
+            "target_address": self._normalize_address(target_address),
+            "target_namespace_id": namespace_id,
+            "scoped_metadata_key": scoped_metadata_key,
+            "value_size_delta": value_size_delta,
+            "value": value,
+        }
+        return self.facade.transaction_factory.create_embedded(metadata_dict)
 
     def create_aggregate_complete_from_embedded(
         self,
@@ -470,19 +555,20 @@ class TransactionManager:
         transactions_hash = self.facade.hash_embedded_transactions(
             embedded_transactions
         )
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
 
-        descriptor = sc.AggregateCompleteTransactionV2Descriptor(  # type: ignore[union-attr]
-            transactions_hash=transactions_hash,
-            transactions=embedded_transactions,
-        )
+        aggregate_dict = {
+            "type": self.AGGREGATE_COMPLETE_TYPE,
+            "signer_public_key": str(self.wallet.public_key),
+            "deadline": deadline_timestamp,
+            "transactions_hash": transactions_hash,
+            "transactions": embedded_transactions,
+        }
 
-        tx = self.facade.create_transaction_from_descriptor(  # type: ignore[union-attr]
-            descriptor,
-            sc.PublicKey(str(self.wallet.public_key)),
-            sc.Amount(fee_multiplier),
-            60 * 60 * 2,
-            0,
-        )
+        tx = self.facade.transaction_factory.create(aggregate_dict)
+        tx.fee = sc.Amount(tx.size * fee_multiplier)
         return tx
 
     def _sign_and_announce_aggregate(

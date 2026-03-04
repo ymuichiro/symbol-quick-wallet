@@ -1,306 +1,179 @@
 # AGENTS.md
 
-Guidelines for AI coding agents working in the Symbol Quick Wallet repository.
+Guidelines and fast-start context for AI coding agents working on `symbol-quick-wallet`.
 
-## Project Overview
+Last synced with `origin/main` commit `05763cd` on 2026-02-28.
 
-A terminal-first TUI cryptocurrency wallet for the Symbol blockchain built with Python and the Textual framework. Supports testnet/mainnet, encrypted wallet storage, XYM transfers, mosaic management, and address book features.
+## Project Summary
+- Terminal-first Symbol wallet built with Python + Textual.
+- Primary entrypoint: `symbol-quick-wallet = src.__main__:main`.
+- Supports account management, transfer, aggregate tx, namespace, metadata, multisig, lock, monitoring, and address book operations.
 
-## Architecture Requirements
+## Current Architecture (After Main Update)
 
-### Feature-Based Module Organization
+### App Composition
+- `src/__main__.py`
+  - `WalletApp` is the main Textual app.
+  - Uses mixins for feature handlers:
+    - `TransferHandlersMixin`
+    - `AddressBookHandlersMixin`
+    - `AccountHandlersMixin`
+    - `MosaicHandlersMixin`
+    - `NamespaceHandlersMixin`
+    - `MultisigHandlersMixin`
+    - `MetadataHandlersMixin`
+    - `LockHandlersMixin`
+    - `AggregateHandlersMixin`
+  - Initializes queue/template/monitoring infrastructure:
+    - `TransactionQueue`
+    - `TemplateStorage`
+    - `ConnectionMonitor`
+    - `TransactionMonitor`
 
-This application must be organized into feature-based modules. Each feature should be self-contained with its own logic, UI components, and tests.
+### Feature Modules (`src/features/`)
+Implemented features are split by domain and typically contain `handlers.py`, `service.py`, `screen.py`:
+- `account`
+- `address_book`
+- `aggregate`
+- `lock`
+- `metadata`
+- `monitoring` (service-focused)
+- `mosaic`
+- `multisig`
+- `namespace`
+- `transfer`
 
-**Feature Module Structure:**
-```
-src/
-  features/
-    transfer/           # Transfer feature
-      __init__.py
-      service.py        # Business logic
-      screen.py         # TUI screen
-      validators.py     # Feature-specific validation
-    address_book/       # Address book feature
-      __init__.py
-      service.py
-      screen.py
-    mosaic/             # Mosaic management feature
-      __init__.py
-      service.py
-      screen.py
-```
+### Shared Modules (`src/shared/`)
+Cross-feature utilities are centralized here:
+- `clipboard.py`
+- `connection_state.py`
+- `logging.py`
+- `network.py`
+- `protocols.py`
+- `qr_scanner.py`
+- `styles.py`
+- `transaction_queue.py`
+- `transaction_template.py`
+- `validation.py`
 
-**Rules:**
-- Each feature module must be independently testable
-- Cross-feature dependencies should be minimized
-- Shared utilities go in `src/utils/` or top-level modules
-- Tests must mirror the module structure: `tests/features/transfer/test_service.py`
+### Legacy/Core Modules Still Used
+- `src/wallet.py`
+- `src/transaction.py`
+- `src/screens.py` (shared modals and dialogs)
 
-### Real Blockchain Integration Testing
+## Testing Structure (Now Feature-Based)
+Tests are reorganized to mirror features:
+- `tests/features/{feature}/...`
+- `tests/shared/...`
 
-**CRITICAL: This is a blockchain wallet application. Mock APIs are NOT permitted.**
+Important fixtures/config:
+- `tests/conftest.py`
+  - Adds `--test-key-file` option.
+  - Adds `--require-live-key` option (fail instead of skip when live key is missing).
+  - Provides `loaded_testnet_wallet` fixture (skips if no key unless `--require-live-key`).
+  - Selects reachable testnet node dynamically from:
+    1. `SYMBOL_TEST_NODE_URL`
+    2. `SYMBOL_TEST_NODE_URLS` (comma-separated)
+    3. fallback defaults (`sym-test-01`, `sym-test-03`)
+  - Isolates wallet storage with `SYMBOL_WALLET_DIR` temp dir for most tests.
 
-All blockchain-related functionality MUST be tested against real Symbol blockchain nodes:
-
-1. **Use Testnet for Development**: Default to `http://sym-test-01.opening-line.jp:3000` for testing
-2. **Real Transaction Testing**: When implementing transaction features, actually announce transactions to the network and verify confirmation
-3. **CLI Verification**: After implementing features, run the application via CLI and verify operations work:
-   ```bash
-   uv run symbol-quick-wallet
-   ```
-4. **SDK Documentation**: Reference implementation examples in `docs/quick_learning_symbol_v3/`:
-   - `04_transaction.md` - Transaction creation, signing, announcing
-   - `05_mosaic.md` - Mosaic operations
-   - `03_account.md` - Account management
-   - Other docs for advanced features
-
-**Testing Workflow:**
+## Live Test Key Workflow
+- Generate a disposable key file (do not commit):
 ```bash
-# 1. Run unit tests
-uv run pytest tests/test_validation.py -v
+uv run python scripts/setup_test_key.py
+```
+- Preferred execution style for strict live runs:
+```bash
+SYMBOL_TEST_RUN_LIVE=1 uv run pytest -q \
+  --test-key-file /path/to/.test_key \
+  --require-live-key \
+  -m "integration and slow"
+```
+- Key resolution order in tests:
+  1. `--test-key-file`
+  2. `SYMBOL_TEST_PRIVATE_KEY`
+- Removed legacy hardcoded-key helpers:
+  - `tests/live_test_key.py` (deleted)
+  - `scripts/set_live_test_key.py` (deleted)
 
-# 2. Run integration tests against real nodes
-uv run pytest -m integration -v
+## On-Chain Flow Notes (Important)
+- `Wallet.get_balance` and account balance parsing now unwrap `/accounts/{address}` responses with `{"account": ...}`.
+- Mosaic creation flow is now two-step:
+  1. `mosaic_definition_transaction_v1`
+  2. `mosaic_supply_change_transaction_v1`
+- Previously skipped mosaic transaction-creation integration tests are re-enabled and passing.
+- Mosaic REST lookups require 16-hex mosaic IDs (no `0x` prefix). `Wallet.get_mosaic_info` and namespace lookup normalize this.
+- Namespace ID/path generation now uses Symbol SDK `IdGenerator` in both wallet and namespace service.
+- Namespace resolution integration tests for `symbol.xym` are enabled and passing on testnet.
+- Aggregate live tests must handle node capability limits:
+  - aggregate transaction announce now uses v3 descriptors (`aggregate_complete_transaction_v3` / `aggregate_bonded_transaction_v3`).
+  - some nodes still return unavailable bonded visibility despite successful announce/confirmation flow.
+  - slow live aggregate tests skip in those capability-limited conditions instead of false-failing.
+- Slow live confirmation tests use `SYMBOL_TEST_CONFIRM_TIMEOUT` (default 300s) to reduce transient network flakiness.
 
-# 3. Manual CLI verification
+## Blockchain Testing Policy
+This is a blockchain wallet project. Prefer real-node verification for blockchain behavior.
+- Integration tests use Symbol testnet nodes.
+- Live transaction tests are gated by environment flags and key availability.
+
+Useful setup:
+```bash
+uv run python scripts/setup_test_key.py
+# creates .test_key for integration/live scenarios
+
+# strict mode: fail fast if no live key is available
+uv run pytest --test-key-file .test_key --require-live-key -m "integration and slow" -q
+```
+
+## Useful Commands
+```bash
+# Run app
 uv run symbol-quick-wallet
-# Perform actual transfer on testnet and verify it confirms
-```
 
-**Integration Test Requirements:**
-- Use `@pytest.mark.integration` for tests that hit real nodes
-- Use `@pytest.mark.slow` for tests that wait for transaction confirmation
-- Test on testnet first; mainnet tests require explicit user consent
-- Verify transaction status via `/transactionStatus` endpoint
-- Wait for `group: "confirmed"` before considering test passed
-
-## Build/Lint/Test Commands
-
-### Type Checking
-```bash
-uv run ty check src/
-```
-
-### Linting
-```bash
+# Lint / type
 uv run ruff check src/
-uv run ruff check src/ --fix  # Auto-fix issues
+uv run ty check src/
+
+# Tests
+uv run pytest -q
+uv run pytest -m unit -q
+uv run pytest -m "integration and not slow" -q
+uv run pytest -m "slow and integration" -q
 ```
 
-### Formatting
-```bash
-uv run ruff format src/
-uv run ruff format src/ --check  # Check without modifying
-```
+## Verified Status (Local, 2026-03-01 Latest)
+- `uv run ruff check .`: pass
+- `uv run ty check src`: pass
+- `uv run ty check`: fail (34 diagnostics in test typing assertions; non-blocking for runtime code)
+- `SYMBOL_TEST_RUN_LIVE=1 uv run pytest -q -m 'integration and not slow' --test-key-file /tmp/symbol-quick-wallet-test-key --require-live-key -rs .`: pass (`91 passed, 409 deselected`)
+- `SYMBOL_TEST_RUN_LIVE=1 uv run pytest -q -m 'integration and slow' --test-key-file /tmp/symbol-quick-wallet-test-key --require-live-key -rs .`: pass (`19 passed, 2 skipped, 479 deselected`)
 
-### Running Tests
-```bash
-uv run pytest -q                    # Run all tests (quiet)
-uv run pytest -v                    # Run all tests (verbose)
-uv run pytest tests/test_validation.py  # Run specific test file
-uv run pytest tests/test_validation.py::TestAddressValidator -v  # Run specific test class
-uv run pytest tests/test_validation.py::TestAddressValidator::test_valid_testnet_address -v  # Run single test
-uv run pytest -m "not slow"         # Skip slow tests
-uv run pytest -m integration        # Run only integration tests
-uv run pytest -m unit               # Run only unit tests
-```
+## Known Issues / Tech Debt
+- Version mismatch remains:
+  - `pyproject.toml`: `0.6.2`
+  - `src/__init__.py`: `__version__ = "0.6.0"`
+- Repository URLs in `pyproject.toml` still use `yourusername` placeholders.
+- `docs/quick_learning_symbol_v3` exists as a gitlink, but `.gitmodules` is missing.
+- Type-checking currently not green (`ty` failures listed above).
+- Aggregate v3 is implemented and confirmed on testnet, but bonded visibility can still be unavailable on some nodes; 2 aggregate slow tests may skip by design.
 
-### Running the Application
-```bash
-uv run symbol-quick-wallet          # Run the wallet application
-```
+## Agent Working Rules for This Repo
+- Prefer editing inside feature modules first; avoid adding new cross-feature coupling in `src/__main__.py` unless orchestration is required.
+- Keep shared concerns in `src/shared/`.
+- When adding feature behavior, add corresponding tests under `tests/features/<feature>/`.
+- For blockchain transaction logic changes, run at least:
+  - targeted feature tests
+  - `integration and not slow`
+  - and live/slow tests if behavior affects on-chain confirmation semantics.
+- While working, keep an execution memory log under `docs/memory/**`.
+  - Record key decisions, implementation intent, scope changes, and test outcomes.
+  - Append entries during the task (not only at completion).
+  - Use dated files such as `docs/memory/2026-02-28.md`.
+  - Never store secrets (private keys, tokens, passwords) in memory logs.
 
-## Code Style Guidelines
-
-### Python Version
-- Requires Python >=3.9.2, <4.0.0
-- Use modern type hints: `str | None` instead of `Optional[str]`
-- Use `list[dict[str, Any]]` instead of `List[Dict[str, Any]]`
-
-### Imports
-Group imports in this order, separated by blank lines:
-1. Standard library (alphabetical)
-2. Third-party packages (alphabetical)
-3. Local imports from `src.` (alphabetical)
-
-```python
-import json
-import logging
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable
-
-import requests
-from symbolchain.facade.SymbolFacade import SymbolFacade
-from textual.widgets import Button, Label
-
-from src.network import NetworkClient, NetworkError
-from src.validation import AmountValidator
-```
-
-### Naming Conventions
-- **Modules**: `snake_case.py`
-- **Classes**: `PascalCase` (e.g., `TransactionManager`, `AmountValidator`)
-- **Functions/Methods**: `snake_case` (e.g., `parse_human_amount`, `validate_full`)
-- **Constants**: `UPPER_SNAKE_CASE` (e.g., `MAX_AMOUNT`, `XYM_MOSAIC_ID`)
-- **Class attributes**: `snake_case` (e.g., `node_url`, `timeout_config`)
-- **Private methods**: Prefix with `_` (e.g., `_normalize_address`, `_require_wallet_loaded`)
-
-### Type Annotations
-- Always add type hints to function parameters and return types
-- Use `| None` for optional types
-- Use `Any` sparingly, prefer specific types
-- Use dataclasses for structured data:
-
-```python
-@dataclass
-class ValidationResult:
-    is_valid: bool
-    error_message: str | None = None
-    normalized_value: Any = None
-```
-
-### Error Handling
-- Use custom exceptions inheriting from `Exception`
-- Use the `ValidationResult` pattern for validation:
-  ```python
-  def validate(value: str) -> ValidationResult:
-      if not value:
-          return ValidationResult(is_valid=False, error_message="Value is required")
-      return ValidationResult(is_valid=True, normalized_value=value.strip())
-  ```
-- Raise `ValueError` with descriptive messages for invalid arguments
-- Use logging for errors: `logger.error("Failed to announce transaction: %s", e.message)`
-
-### Logging
-- Create module-level logger: `logger = logging.getLogger(__name__)`
-- Use appropriate log levels: `logger.info()`, `logger.warning()`, `logger.error()`
-- Use lazy formatting: `logger.info("Transaction sent to %s", address)`
-
-### Classes
-- Use `@dataclass` decorator for data-holding classes
-- Define class constants at the top with `UPPER_SNAKE_CASE`
-- Use `@classmethod` for factory methods
-- Use `@staticmethod` for utility methods that don't need instance access
-- Use Protocol classes for duck typing:
-
-```python
-class WalletLike(Protocol):
-    def get_mosaic_name(self, mosaic_id: int) -> str: ...
-```
-
-### Docstrings
-- Module-level docstring at the top of files
-- Use double quotes for docstrings
-- Keep docstrings concise and descriptive
-- Use triple quotes for multiline docstrings
-
-```python
-"""Network utilities for Symbol Quick Wallet with timeout handling."""
-```
-
-### Code Formatting
-- Maximum line length: 88 characters (ruff default)
-- Use trailing commas in multi-line structures
-- Use underscores in large numbers for readability: `1_000_000`, `9_223_372_036_854_775_807`
-
-### Testing Conventions
-- Test files: `tests/test_*.py`
-- Test classes: `class Test*`
-- Test methods: `def test_*`
-- Use pytest fixtures from `conftest.py`
-- Use markers: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
-- Assert with descriptive messages where helpful
-- **Feature module tests**: Place in `tests/features/{feature_name}/test_*.py`
-
-```python
-class TestAmountValidator:
-    def test_valid_decimal(self):
-        result = AmountValidator.parse_human_amount("1.5")
-        assert result.is_valid is True
-        assert result.normalized_value == 1.5
-```
-
-**Testing Feature Modules:**
-```bash
-# Test a specific feature module
-uv run pytest tests/features/transfer/ -v
-
-# Test a specific test in a feature module
-uv run pytest tests/features/transfer/test_service.py::TestTransferService::test_send_transaction -v
-```
-
-### Textual Framework
-- Inherit from `ModalScreen` for modal dialogs
-- Use `BaseModalScreen` for consistent key bindings
-- Define `BINDINGS` class attribute for keyboard shortcuts
-- Use `compose()` method to define widget hierarchy
-- CSS styles are defined in `src/styles.py`
-
-## File Structure
-
-### Current Structure (Top-Level Modules)
-```
-src/
-  __init__.py          # Package exports
-  __main__.py          # Application entry point (main TUI app)
-  clipboard.py         # Clipboard utilities
-  connection_state.py  # Connection status management
-  network.py           # Network client with retry/timeout
-  qr_scanner.py        # QR code scanning
-  screens.py           # Modal screens and dialogs
-  styles.py            # CSS styles for TUI
-  transaction.py       # Transaction management
-  transaction_queue.py # Batch transaction queue
-  transaction_template.py # Transaction templates
-  validation.py        # Input validation utilities
-  wallet.py            # Wallet core functionality
-
-tests/
-  conftest.py          # Shared pytest fixtures
-  test_*.py            # Test modules
-```
-
-### Target Structure (Feature-Based)
-```
-src/
-  __init__.py          # Package exports
-  __main__.py          # Application entry point
-  features/
-    transfer/
-      __init__.py
-      service.py       # Transfer business logic
-      screen.py        # Transfer TUI screen
-      validators.py    # Transfer-specific validation
-    address_book/
-      __init__.py
-      service.py
-      screen.py
-    mosaic/
-      __init__.py
-      service.py
-      screen.py
-  shared/              # Shared utilities (network, validation, etc.)
-    network.py
-    validation.py
-    clipboard.py
-  styles.py            # CSS styles for TUI
-
-tests/
-  conftest.py          # Shared pytest fixtures
-  features/
-    transfer/
-      test_service.py
-      test_screen.py
-    address_book/
-      test_service.py
-    mosaic/
-      test_service.py
-```
-
-## Pre-commit Checklist
-1. `uv run ruff check src/` - Fix lint issues
-2. `uv run ruff format src/` - Format code
-3. `uv run ty check src/` - Verify type checking passes
-4. `uv run pytest -q` - Ensure all tests pass
+## Fast Start Checklist
+1. Confirm branch state and latest `origin/main`.
+2. Read this file + relevant feature module files.
+3. Run targeted tests for touched feature.
+4. Run `ruff` and `ty` before finalizing.
+5. If touching on-chain flow, run integration tests and report what was skipped vs executed.

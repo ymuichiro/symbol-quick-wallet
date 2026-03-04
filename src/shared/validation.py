@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from symbolchain.facade.SymbolFacade import SymbolFacade
+
 
 @dataclass
 class ValidationResult:
@@ -162,9 +164,19 @@ class AmountValidator:
 class AddressValidator:
     MIN_ADDRESS_LENGTH = 39
     MAX_ADDRESS_LENGTH = 40
+    _facade_cache: dict[str, SymbolFacade] = {}
 
-    @staticmethod
-    def validate(value: str) -> ValidationResult:
+    @classmethod
+    def _get_facade(cls, network_name: str) -> SymbolFacade:
+        normalized = network_name.lower()
+        if normalized not in cls._facade_cache:
+            cls._facade_cache[normalized] = SymbolFacade(normalized)
+        return cls._facade_cache[normalized]
+
+    @classmethod
+    def validate(
+        cls, value: str, expected_network: str | None = None
+    ) -> ValidationResult:
         if not value or not value.strip():
             return ValidationResult(
                 is_valid=False,
@@ -173,16 +185,16 @@ class AddressValidator:
 
         normalized = value.strip().replace("-", "").upper()
 
-        if len(normalized) < AddressValidator.MIN_ADDRESS_LENGTH:
+        if len(normalized) < cls.MIN_ADDRESS_LENGTH:
             return ValidationResult(
                 is_valid=False,
-                error_message=f"Address too short. Expected {AddressValidator.MIN_ADDRESS_LENGTH}-{AddressValidator.MAX_ADDRESS_LENGTH} characters",
+                error_message=f"Address too short. Expected {cls.MIN_ADDRESS_LENGTH}-{cls.MAX_ADDRESS_LENGTH} characters",
             )
 
-        if len(normalized) > AddressValidator.MAX_ADDRESS_LENGTH:
+        if len(normalized) > cls.MAX_ADDRESS_LENGTH:
             return ValidationResult(
                 is_valid=False,
-                error_message=f"Address too long. Expected {AddressValidator.MIN_ADDRESS_LENGTH}-{AddressValidator.MAX_ADDRESS_LENGTH} characters",
+                error_message=f"Address too long. Expected {cls.MIN_ADDRESS_LENGTH}-{cls.MAX_ADDRESS_LENGTH} characters",
             )
 
         try:
@@ -198,6 +210,41 @@ class AddressValidator:
             return ValidationResult(
                 is_valid=False,
                 error_message="Address must start with 'T' (testnet) or 'N' (mainnet)",
+            )
+
+        target_network: str
+        if expected_network:
+            expected = expected_network.lower()
+            if expected.startswith("test"):
+                target_network = "testnet"
+            elif expected.startswith("main"):
+                target_network = "mainnet"
+            else:
+                target_network = "testnet" if normalized.startswith("T") else "mainnet"
+
+            expected_prefix = "T" if target_network == "testnet" else "N"
+            if normalized[0] != expected_prefix:
+                return ValidationResult(
+                    is_valid=False,
+                    error_message=(
+                        "Address network mismatch. "
+                        f"Expected {target_network} address (prefix '{expected_prefix}')"
+                    ),
+                )
+        else:
+            target_network = "testnet" if normalized.startswith("T") else "mainnet"
+
+        try:
+            facade = cls._get_facade(target_network)
+            if not facade.network.is_valid_address_string(normalized):
+                return ValidationResult(
+                    is_valid=False,
+                    error_message="Address checksum is invalid",
+                )
+        except Exception:
+            return ValidationResult(
+                is_valid=False,
+                error_message="Address format is invalid",
             )
 
         return ValidationResult(

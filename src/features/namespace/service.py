@@ -5,9 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from symbolchain.symbol import IdGenerator
+
 from src.features.namespace.validators import NamespaceValidator, ValidationResult
 from src.shared.logging import get_logger
 from src.shared.protocols import WalletProtocol
+from src.shared.validation import AddressValidator
 
 logger = get_logger(__name__)
 
@@ -102,22 +105,12 @@ class NamespaceService:
         return NamespaceValidator.validate_duration(duration_days)
 
     def generate_namespace_id(self, name: str, parent_id: int = 0) -> int:
-        name_bytes = name.encode("utf-8")
-        namespace_id = parent_id
-        for i, char_byte in enumerate(name_bytes):
-            namespace_id = (namespace_id * 31 + char_byte) & 0xFFFFFFFFFFFFFFFF
-            if i == 0:
-                namespace_id = namespace_id | 0x8000000000000000
-        return namespace_id
+        return int(IdGenerator.generate_namespace_id(name.lower(), parent_id))
 
     def generate_namespace_path(self, full_name: str) -> list[int]:
-        parts = full_name.lower().split(".")
-        path = [0]
-        for part in parts:
-            parent_id = path[-1]
-            namespace_id = self.generate_namespace_id(part, parent_id)
-            path.append(namespace_id)
-        return path[1:]
+        return [
+            int(ns_id) for ns_id in IdGenerator.generate_namespace_path(full_name.lower())
+        ]
 
     def get_namespace_id(self, full_name: str) -> int:
         path = self.generate_namespace_path(full_name)
@@ -335,12 +328,18 @@ class NamespaceService:
         if not full_name_result.is_valid:
             raise ValueError(full_name_result.error_message)
 
+        address_result = AddressValidator.validate(
+            address, expected_network=self.wallet.network_name
+        )
+        if not address_result.is_valid:
+            raise ValueError(address_result.error_message or "Invalid address")
+
         if self.transaction_manager is None:
             raise ValueError("Transaction manager is required to link aliases")
 
         return self.transaction_manager.create_sign_and_announce_address_alias(
             full_name_result.normalized_value,
-            address.replace("-", "").upper(),
+            str(address_result.normalized_value),
             link_action,
         )
 

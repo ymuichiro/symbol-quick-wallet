@@ -1,9 +1,8 @@
 """Tests for multisig account service."""
 
-import json
+import os
+import time
 import pytest
-from dataclasses import asdict
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 from symbolchain import sc
@@ -13,7 +12,6 @@ from symbolchain.facade.SymbolFacade import SymbolFacade
 from src.features.multisig.service import (
     MultisigService,
     MultisigAccountInfo,
-    CosignerInfo,
     MAX_COSIGNATORIES,
 )
 
@@ -246,6 +244,11 @@ class TestMultisigServiceGetInfo:
 VALID_COSIGNER_ADDRESS = "TCOMA5VG67TZH4X55HGZOXOFP7S232CYEQMOS7Q"
 
 
+def _is_aggregate_prohibited(error_message: str) -> bool:
+    marker = "Failure_Aggregate_"
+    return marker in error_message and error_message.endswith("_Prohibited")
+
+
 class TestCreateMultisigModificationEmbedded:
     def test_create_multisig_modification_embedded(self, multisig_service, mock_wallet):
         embedded = multisig_service.create_multisig_modification_embedded(
@@ -400,7 +403,13 @@ class TestMultisigServiceIntegration:
             "TCOMA5VG67TZH4X55HGZOXOFP7S232CYEQMOS7Q"
         )
 
-        assert result is not None or result is None
+        if result is not None:
+            assert isinstance(result, MultisigAccountInfo)
+            assert isinstance(result.account_address, str)
+            assert isinstance(result.min_approval, int)
+            assert isinstance(result.min_removal, int)
+            assert isinstance(result.cosignatory_addresses, list)
+            assert isinstance(result.multisig_addresses, list)
 
     def test_fetch_partial_transactions_real_node(self, mock_wallet):
         """Test fetching partial transactions from a real testnet node."""
@@ -415,6 +424,9 @@ class TestMultisigServiceIntegration:
         result = service.fetch_partial_transactions()
 
         assert isinstance(result, list)
+        for tx in result:
+            assert isinstance(tx, dict)
+            assert "meta" in tx
 
 
 @pytest.mark.integration
@@ -425,33 +437,13 @@ class TestMultisigConversionIntegration:
     These tests create real transactions and require funded accounts.
     Run with: uv run pytest tests/features/multisig/test_service.py -m "integration and slow" -v
 
-    Note: Set environment variable SYMBOL_TEST_PRIVATE_KEY with a funded testnet account
-    to run these tests. The account needs at least 20 XYM for multisig conversion fees.
+    Note: Provide a test key via --test-key-file (recommended) or SYMBOL_TEST_PRIVATE_KEY.
+    The account needs at least 20 XYM for multisig conversion fees.
     """
 
     @pytest.fixture
-    def real_wallet(self):
-        """Create a real wallet from test private key."""
-        import os
-
-        private_key_hex = os.environ.get("SYMBOL_TEST_PRIVATE_KEY")
-        if not private_key_hex:
-            pytest.skip("SYMBOL_TEST_PRIVATE_KEY not set")
-
-        facade = SymbolFacade("testnet")
-        private_key = PrivateKey(private_key_hex)
-        account = facade.create_account(private_key)
-
-        wallet = MagicMock()
-        wallet.facade = facade
-        wallet.network_name = "testnet"
-        wallet.node_url = "http://sym-test-01.opening-line.jp:3000"
-        wallet.address = str(account.address)
-        wallet.private_key = private_key
-        wallet.public_key = str(account.public_key)
-        wallet.get_currency_mosaic_id.return_value = 0x72C0212E67A08BCE
-
-        return wallet
+    def real_wallet(self, loaded_testnet_wallet):
+        return loaded_testnet_wallet
 
     def test_get_multisig_account_info_for_real_account(self, real_wallet):
         """Test fetching multisig info for a real account."""
@@ -464,11 +456,12 @@ class TestMultisigConversionIntegration:
         service = MultisigService(real_wallet)
         result = service.get_multisig_account_info(str(real_wallet.address))
 
-        assert result is not None or result is None
-        if result:
-            assert hasattr(result, "min_approval")
-            assert hasattr(result, "min_removal")
-            assert hasattr(result, "cosignatory_addresses")
+        if result is not None:
+            assert isinstance(result, MultisigAccountInfo)
+            assert result.account_address != ""
+            assert isinstance(result.min_approval, int)
+            assert isinstance(result.min_removal, int)
+            assert isinstance(result.cosignatory_addresses, list)
 
     def test_create_multisig_modification_transaction(self, real_wallet):
         """Test creating a multisig modification transaction (without announcing)."""
@@ -512,3 +505,46 @@ class TestMultisigConversionIntegration:
 
         assert embedded is not None
         assert isinstance(embedded, sc.EmbeddedTransaction)
+
+    def test_live_initiate_multisig_transaction_and_confirm(self, real_wallet):
+        if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
+            pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live multisig tests")
+
+        wallet = real_wallet
+        before = wallet.get_xym_balance()
+        transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
+
+        if before["xym_micro"] <= transfer_micro:
+            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+
+        service = MultisigService(wallet, wallet.node_url)
+        currency_mosaic_id = wallet.get_currency_mosaic_id() or 0x72C0212E67A08BCE
+        message = f"multisig-live-{int(time.time())}"
+
+        result = service.initiate_multisig_transaction(
+            multisig_public_key=str(wallet.public_key),
+            recipient_address=str(wallet.address),
+            mosaics=[{"mosaic_id": currency_mosaic_id, "amount": transfer_micro}],
+            message=message,
+        )
+
+        assert "hash" in result
+        assert len(result["hash"]) == 64
+
+        try:
+            status = service.wait_for_confirmation(
+                result["hash"],
+                timeout_seconds=confirm_timeout,
+                poll_interval=5,
+            )
+        except Exception as e:
+            message_text = str(e)
+            if _is_aggregate_prohibited(message_text):
+                pytest.skip(
+                    "Aggregate transactions are prohibited by this node/network: "
+                    f"{message_text}"
+                )
+            raise
+
+        assert status.get("group") == "confirmed"

@@ -8,8 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from symbolchain import sc
 from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
+from symbolchain.symbol import IdGenerator
 
 from src.shared.logging import get_logger
 from src.shared.network import (
@@ -69,6 +73,10 @@ class Wallet:
     XYM_MOSAIC_ID: int = 0x6BED913FA20223F8
     TESTNET_XYM_MOSAIC_ID: int = 0x72C0212E67A08BCE
     XYM_DIVISIBILITY: int = 6
+    DEFAULT_FEE_MULTIPLIER: int = 100
+    ENCRYPTION_VERSION: str = "v2"
+    KDF_ITERATIONS: int = 390_000
+    KDF_SALT_BYTES: int = 16
 
     @classmethod
     def _resolve_storage_dir(cls, storage_dir: str | Path | None = None) -> Path:
@@ -155,6 +163,13 @@ class Wallet:
 
         return None
 
+    @classmethod
+    def _format_mosaic_id_for_api(cls, mosaic_id: str | int) -> str:
+        normalized = cls._normalize_mosaic_id(mosaic_id)
+        if normalized is None:
+            return str(mosaic_id)
+        return f"{normalized:016X}"
+
     @staticmethod
     def _normalize_amount(amount: Any) -> int:
         try:
@@ -165,7 +180,10 @@ class Wallet:
     def _normalize_mosaics(self, mosaics: list[dict[str, Any]]) -> list[dict[str, int]]:
         normalized = []
         for mosaic in mosaics:
-            mosaic_id = self._normalize_mosaic_id(mosaic.get("id"))
+            # Account endpoints use `id`, while some transaction views expose `mosaicId`.
+            mosaic_id = self._normalize_mosaic_id(
+                mosaic.get("id", mosaic.get("mosaicId"))
+            )
             if mosaic_id is None:
                 continue
             normalized.append(
@@ -183,10 +201,21 @@ class Wallet:
 
         normalized_address = self._normalize_address(target_address)
         try:
-            return self._network_client.get_optional(
+            response = self._network_client.get_optional(
                 f"/accounts/{normalized_address}",
                 context="Fetch account data",
             )
+            if not response:
+                return None
+
+            # `/accounts/{address}` responses are wrapped as {"account": {...}}.
+            if isinstance(response, dict):
+                account = response.get("account")
+                if isinstance(account, dict):
+                    return account
+                return response
+
+            return None
         except NetworkError:
             return None
 
@@ -565,18 +594,54 @@ class Wallet:
             address, {"name": "", "address": address, "note": "", "group_id": None}
         )
 
-    def encrypt_private_key(self, password):
-        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
+    @staticmethod
+    def _build_legacy_fernet_key(password: str) -> bytes:
+        return base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
+
+    @classmethod
+    def _derive_fernet_key(cls, password: str, salt: bytes) -> bytes:
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=cls.KDF_ITERATIONS,
+        )
+        return base64.urlsafe_b64encode(kdf.derive(password.encode("utf-8")))
+
+    @classmethod
+    def _encrypt_with_password(cls, plaintext: str, password: str) -> str:
+        salt = os.urandom(cls.KDF_SALT_BYTES)
+        key = cls._derive_fernet_key(password, salt)
         cipher = Fernet(key)
-        encrypted = cipher.encrypt(str(self.private_key).encode())
-        return encrypted.decode()
+        encrypted = cipher.encrypt(plaintext.encode()).decode()
+        salt_b64 = base64.urlsafe_b64encode(salt).decode()
+        return f"{cls.ENCRYPTION_VERSION}:{salt_b64}:{encrypted}"
+
+    @classmethod
+    def _decrypt_with_password(cls, encrypted_key: str, password: str) -> str:
+        if encrypted_key.startswith(f"{cls.ENCRYPTION_VERSION}:"):
+            parts = encrypted_key.split(":", 2)
+            if len(parts) != 3:
+                raise Exception("Failed to decrypt private key: invalid encrypted format")
+            _, salt_b64, payload = parts
+            salt = base64.urlsafe_b64decode(salt_b64.encode())
+            key = cls._derive_fernet_key(password, salt)
+            cipher = Fernet(key)
+            decrypted = cipher.decrypt(payload.encode())
+            return decrypted.decode()
+
+        # Backward compatibility for legacy wallet data.
+        legacy_key = cls._build_legacy_fernet_key(password)
+        legacy_cipher = Fernet(legacy_key)
+        decrypted = legacy_cipher.decrypt(encrypted_key.encode())
+        return decrypted.decode()
+
+    def encrypt_private_key(self, password):
+        return self._encrypt_with_password(str(self.private_key), password)
 
     def decrypt_private_key(self, encrypted_key, password):
-        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
-        cipher = Fernet(key)
         try:
-            decrypted = cipher.decrypt(encrypted_key.encode())
-            return decrypted.decode()
+            return self._decrypt_with_password(encrypted_key, password)
         except Exception as e:
             raise Exception(f"Failed to decrypt private key: {str(e)}")
 
@@ -689,8 +754,9 @@ class Wallet:
 
     def get_mosaic_info(self, mosaic_id: str | int) -> dict[str, Any] | None:
         try:
+            mosaic_id_path = self._format_mosaic_id_for_api(mosaic_id)
             return self._network_client.get_optional(
-                f"/mosaics/{mosaic_id}",
+                f"/mosaics/{mosaic_id_path}",
                 context="Fetch mosaic info",
             )
         except Exception:
@@ -728,8 +794,9 @@ class Wallet:
 
     def get_mosaic_namespace_name(self, mosaic_id: int) -> str | None:
         try:
+            mosaic_id_path = self._format_mosaic_id_for_api(mosaic_id)
             result = self._network_client.get_optional(
-                f"/namespaces/mosaic/{mosaic_id}",
+                f"/namespaces/mosaic/{mosaic_id_path}",
                 context="Fetch mosaic namespace",
             )
             if result is None:
@@ -885,8 +952,14 @@ class Wallet:
         transferable=True,
         supply_mutable=False,
         revokable=False,
+        duration_blocks: int = 1000,
     ):
-        """Create a mosaic definition transaction."""
+        """Create a mosaic definition transaction.
+
+        Note:
+            Mosaic initial supply is no longer part of definition tx in current SDKs.
+            Use `create_mosaic_supply_change_transaction` after this transaction is confirmed.
+        """
         deadline_timestamp = self.facade.network.from_datetime(
             datetime.now(timezone.utc) + timedelta(hours=2)
         ).timestamp
@@ -899,21 +972,61 @@ class Wallet:
         if revokable:
             mosaic_flags |= 0x4
 
+        nonce = int.from_bytes(os.urandom(4), "little")
         mosaic_dict = {
             "type": "mosaic_definition_transaction_v1",
             "signer_public_key": str(self.public_key),
             "deadline": deadline_timestamp,
+            "nonce": nonce,
             "divisibility": divisibility,
             "flags": mosaic_flags,
-            "supply": supply,
+            "duration": duration_blocks,
         }
 
         mosaic_tx = self.facade.transaction_factory.create(mosaic_dict)
+        mosaic_tx.fee = sc.Amount(mosaic_tx.size * self.DEFAULT_FEE_MULTIPLIER)
 
         logger.info(
-            f"Mosaic definition transaction created: supply={supply}, divisibility={divisibility}"
+            "Mosaic definition transaction created: mosaic_id=%s, divisibility=%s, requested_supply=%s",
+            str(getattr(mosaic_tx, "id", "unknown")),
+            divisibility,
+            supply,
         )
         return mosaic_tx
+
+    def create_mosaic_supply_change_transaction(
+        self,
+        mosaic_id: int,
+        supply_delta: int,
+        increase: bool = True,
+    ):
+        """Create a mosaic supply change transaction."""
+        deadline_timestamp = self.facade.network.from_datetime(
+            datetime.now(timezone.utc) + timedelta(hours=2)
+        ).timestamp
+
+        if supply_delta <= 0:
+            raise ValueError("supply_delta must be a positive integer")
+
+        action = "increase" if increase else "decrease"
+        supply_dict = {
+            "type": "mosaic_supply_change_transaction_v1",
+            "signer_public_key": str(self.public_key),
+            "deadline": deadline_timestamp,
+            "mosaic_id": mosaic_id,
+            "delta": supply_delta,
+            "action": action,
+        }
+
+        supply_tx = self.facade.transaction_factory.create(supply_dict)
+        supply_tx.fee = sc.Amount(supply_tx.size * self.DEFAULT_FEE_MULTIPLIER)
+        logger.info(
+            "Mosaic supply change transaction created: mosaic_id=%s, delta=%s, action=%s",
+            hex(mosaic_id),
+            supply_delta,
+            action,
+        )
+        return supply_tx
 
     def create_root_namespace_transaction(
         self,
@@ -1028,22 +1141,12 @@ class Wallet:
         return alias_tx
 
     def _generate_namespace_id(self, name: str, parent_id: int = 0) -> int:
-        name_bytes = name.encode("utf-8")
-        namespace_id = parent_id
-        for i, char_byte in enumerate(name_bytes):
-            namespace_id = (namespace_id * 31 + char_byte) & 0xFFFFFFFFFFFFFFFF
-            if i == 0:
-                namespace_id = namespace_id | 0x8000000000000000
-        return namespace_id
+        return int(IdGenerator.generate_namespace_id(name.lower(), parent_id))
 
     def _generate_namespace_path(self, full_name: str) -> list[int]:
-        parts = full_name.lower().split(".")
-        path = [0]
-        for part in parts:
-            parent_id = path[-1]
-            namespace_id = self._generate_namespace_id(part, parent_id)
-            path.append(namespace_id)
-        return path[1:]
+        return [
+            int(ns_id) for ns_id in IdGenerator.generate_namespace_path(full_name.lower())
+        ]
 
     def get_harvesting_status(self):
         """Get harvesting status of account."""
@@ -1294,19 +1397,13 @@ class Wallet:
                 json.dump({}, f)
 
     def _encrypt_private_key_for_account(self, private_key: str, password: str) -> str:
-        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
-        cipher = Fernet(key)
-        encrypted = cipher.encrypt(private_key.encode())
-        return encrypted.decode()
+        return self._encrypt_with_password(private_key, password)
 
     def _decrypt_private_key_for_account(
         self, encrypted_key: str, password: str
     ) -> str:
-        key = base64.urlsafe_b64encode(password.encode().ljust(32)[:32])
-        cipher = Fernet(key)
         try:
-            decrypted = cipher.decrypt(encrypted_key.encode())
-            return decrypted.decode()
+            return self._decrypt_with_password(encrypted_key, password)
         except Exception as e:
             raise Exception(f"Failed to decrypt private key: {str(e)}")
 

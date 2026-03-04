@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -57,24 +57,25 @@ class MetadataHandlersMixin:
             def on_button_pressed(self, event):
                 if not isinstance(event.button, Button):
                     return
+                app = cast("WalletApp", self.app)
                 button_id = event.button.id
                 if button_id == "view-account-meta-btn":
-                    self.app.pop_screen()
-                    self.app.show_account_metadata()
+                    app.pop_screen()
+                    app.show_account_metadata()
                 elif button_id == "add-account-meta-btn":
-                    self.app.pop_screen()
-                    self.app.show_add_account_metadata()
+                    app.pop_screen()
+                    app.show_add_account_metadata()
                 elif button_id == "add-mosaic-meta-btn":
-                    self.app.pop_screen()
-                    self.app.show_add_mosaic_metadata()
+                    app.pop_screen()
+                    app.show_add_mosaic_metadata()
                 elif button_id == "add-namespace-meta-btn":
-                    self.app.pop_screen()
-                    self.app.show_add_namespace_metadata()
+                    app.pop_screen()
+                    app.show_add_namespace_metadata()
                 elif button_id == "remove-meta-btn":
-                    self.app.pop_screen()
-                    self.app.show_remove_metadata()
+                    app.pop_screen()
+                    app.show_remove_metadata()
                 elif button_id == "close-meta-menu-btn":
-                    self.app.pop_screen()
+                    app.pop_screen()
 
         self.push_screen(MetadataMenuScreen())
 

@@ -2,41 +2,8 @@ import os
 import time
 
 import pytest
-from symbolchain.CryptoTypes import PrivateKey
-from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.transaction import TransactionManager
-from src.wallet import Wallet
-from tests.live_test_key import HARDCODED_TEST_PRIVATE_KEY
-
-TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
-
-
-@pytest.fixture
-def testnet_wallet():
-    wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
-    return wallet
-
-
-@pytest.fixture
-def loaded_testnet_wallet():
-    private_key_hex = HARDCODED_TEST_PRIVATE_KEY.strip()
-    if not private_key_hex:
-        private_key_hex = os.getenv("SYMBOL_TEST_PRIVATE_KEY", "").strip()
-    if not private_key_hex:
-        pytest.skip("No test private key available")
-
-    wallet = Wallet(network_name="testnet")
-    wallet.node_url = TESTNET_NODE
-    wallet._update_node_url(TESTNET_NODE)
-    wallet.facade = SymbolFacade("testnet")
-    wallet.private_key = PrivateKey(private_key_hex)
-    account = wallet.facade.create_account(wallet.private_key)
-    wallet.public_key = account.public_key
-    wallet.address = account.address
-    return wallet
 
 
 @pytest.mark.integration
@@ -114,6 +81,7 @@ class TestWalletLiveTransaction:
         wallet = loaded_testnet_wallet
         before = wallet.get_xym_balance()
         transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
         assert before["xym_micro"] > transfer_micro, (
             f"Insufficient balance: {before['xym_micro']} micro XYM available"
@@ -134,7 +102,7 @@ class TestWalletLiveTransaction:
 
         confirmed = wallet.wait_for_transaction_confirmation(
             tx_hash,
-            timeout_seconds=180,
+            timeout_seconds=confirm_timeout,
             poll_interval_seconds=5,
         )
         assert confirmed["group"] == "confirmed"
@@ -146,6 +114,7 @@ class TestWalletLiveTransaction:
         wallet = loaded_testnet_wallet
         before = wallet.get_xym_balance()
         transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
+        confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
         if before["xym_micro"] <= transfer_micro:
             pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
@@ -162,7 +131,7 @@ class TestWalletLiveTransaction:
 
         tx_hash = result["hash"]
         confirmed = wallet.wait_for_transaction_confirmation(
-            tx_hash, timeout_seconds=180
+            tx_hash, timeout_seconds=confirm_timeout
         )
         assert confirmed["group"] == "confirmed"
 

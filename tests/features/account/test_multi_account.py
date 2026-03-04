@@ -1,7 +1,6 @@
 import json
 import pytest
 from symbolchain.CryptoTypes import PrivateKey
-from symbolchain.facade.SymbolFacade import SymbolFacade
 
 from src.wallet import Wallet, AccountInfo, MULTI_ACCOUNT_VERSION
 

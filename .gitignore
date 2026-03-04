@@ -23,3 +23,5 @@ htmlcov/
 uv.lock
 *.whl
 *.tar.gz
+.test_key
+.test_key*

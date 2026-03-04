@@ -111,7 +111,7 @@ def test_load_wallet_with_empty_password():
 
 @pytest.mark.unit
 def test_load_wallet_without_password():
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory():
         wallet = Wallet(network_name="testnet")
         private_key = PrivateKey.random()
         facade = SymbolFacade("testnet")

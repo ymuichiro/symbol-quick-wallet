@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import Fernet
 from symbolchain.CryptoTypes import PrivateKey
 
 from src.wallet import Wallet
@@ -67,9 +68,10 @@ class TestWalletEncryptionDecryption:
         wallet.create_wallet()
         long_password = "a" * 100
         encrypted = wallet.encrypt_private_key(long_password)
-        truncated_password = "a" * 32
-        decrypted = wallet.decrypt_private_key(encrypted, truncated_password)
+        decrypted = wallet.decrypt_private_key(encrypted, long_password)
         assert decrypted == str(wallet.private_key)
+        with pytest.raises(Exception, match="Failed to decrypt"):
+            wallet.decrypt_private_key(encrypted, "a" * 32)
 
     @pytest.mark.unit
     def test_special_characters_in_password(self, wallet):
@@ -120,3 +122,15 @@ class TestWalletEncryptionDecryption:
         tampered = encrypted[:-5] + "XXXXX"
         with pytest.raises(Exception):
             wallet.decrypt_private_key(tampered, "password")
+
+    @pytest.mark.unit
+    def test_decrypt_legacy_format_for_backward_compatibility(self, wallet):
+        wallet.create_wallet()
+        private_key_hex = str(wallet.private_key)
+        password = "legacy-password"
+
+        legacy_key = wallet._build_legacy_fernet_key(password)
+        legacy_encrypted = Fernet(legacy_key).encrypt(private_key_hex.encode()).decode()
+
+        decrypted = wallet.decrypt_private_key(legacy_encrypted, password)
+        assert decrypted == private_key_hex

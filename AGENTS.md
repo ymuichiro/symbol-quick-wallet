@@ -96,6 +96,15 @@ SYMBOL_TEST_RUN_LIVE=1 uv run pytest -q \
   - `tests/live_test_key.py` (deleted)
   - `scripts/set_live_test_key.py` (deleted)
 
+### Live Test Key Immutability Rule (Important)
+- Once a test key file has been funded and used for live tests, **do not overwrite/regenerate it**.
+- In stable local environments, avoid any operation that changes the funded test-account key because it effectively "resets" account state and breaks balance continuity.
+- Do not run `scripts/setup_test_key.py` with `--force` against an existing funded key file.
+- Use a persistent path (not `/tmp`) for stable local environments, for example:
+  - `/Users/you/.config/symbol-quick-wallet/keys/testnet_live.key`
+- If you need guardrails during pytest runs, set expected address checks:
+  - `--expected-test-address <ADDRESS>` or `SYMBOL_TEST_EXPECTED_ADDRESS=<ADDRESS>`
+
 ## On-Chain Flow Notes (Important)
 - `Wallet.get_balance` and account balance parsing now unwrap `/accounts/{address}` responses with `{"account": ...}`.
 - Mosaic creation flow is now two-step:

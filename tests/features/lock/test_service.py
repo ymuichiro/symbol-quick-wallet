@@ -358,16 +358,16 @@ class TestLockServiceReadIntegration:
 @pytest.mark.integration
 @pytest.mark.slow
 class TestLockServiceLiveIntegration:
-    def test_live_secret_lock_and_proof(self, loaded_testnet_wallet):
+    def test_live_secret_lock_and_proof(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live lock tests")
 
         wallet = loaded_testnet_wallet
         lock_amount = int(os.getenv("SYMBOL_TEST_SECRET_LOCK_MICRO", "1000000"))
-        before = wallet.get_xym_balance()
         min_balance = lock_amount + 500_000
-        if before["xym_micro"] < min_balance:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        ensure_live_min_balance(wallet, min_balance)
 
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
         lock_service = LockService(wallet, wallet.node_url)
@@ -408,17 +408,15 @@ class TestLockServiceLiveIntegration:
         )
         assert proof_status.get("group") == "confirmed"
 
-    def test_live_hash_lock_announce(self, loaded_testnet_wallet):
+    def test_live_hash_lock_announce(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live lock tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         min_balance = HASH_LOCK_AMOUNT + 500_000
-        if before["xym_micro"] < min_balance:
-            pytest.skip(
-                f"Insufficient balance: {before['xym_micro']} micro XYM (need {min_balance})"
-            )
+        ensure_live_min_balance(wallet, min_balance)
 
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
         aggregate_service = AggregateService(wallet, wallet.node_url)

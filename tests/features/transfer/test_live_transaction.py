@@ -177,7 +177,9 @@ def test_transaction_manager_calculates_hash_and_uses_json_payload(monkeypatch):
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_live_send_and_confirm_transaction(loaded_testnet_wallet):
+def test_live_send_and_confirm_transaction(
+    loaded_testnet_wallet, ensure_live_min_balance
+):
     if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
         pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live transfer tests")
 
@@ -196,10 +198,7 @@ def test_live_send_and_confirm_transaction(loaded_testnet_wallet):
 
     recipient_address = recipient_address_override or str(wallet.address)
 
-    before = wallet.get_xym_balance()
-    assert before["xym_micro"] > transfer_micro, (
-        f"Insufficient balance: {before['xym_micro']} micro XYM available"
-    )
+    ensure_live_min_balance(wallet, transfer_micro + 1)
 
     manager = TransactionManager(wallet, node_url)
     currency_mosaic_id = manager.get_currency_mosaic_id()

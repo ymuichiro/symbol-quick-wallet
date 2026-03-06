@@ -74,18 +74,15 @@ class TestWalletMosaicOperations:
 @pytest.mark.integration
 @pytest.mark.slow
 class TestWalletLiveTransaction:
-    def test_live_transfer_to_self(self, loaded_testnet_wallet):
+    def test_live_transfer_to_self(self, loaded_testnet_wallet, ensure_live_min_balance):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live transfer tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        assert before["xym_micro"] > transfer_micro, (
-            f"Insufficient balance: {before['xym_micro']} micro XYM available"
-        )
+        ensure_live_min_balance(wallet, transfer_micro + 1)
 
         manager = TransactionManager(wallet, wallet.node_url)
         currency_mosaic_id = manager.get_currency_mosaic_id()
@@ -107,17 +104,17 @@ class TestWalletLiveTransaction:
         )
         assert confirmed["group"] == "confirmed"
 
-    def test_live_transfer_with_message(self, loaded_testnet_wallet):
+    def test_live_transfer_with_message(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live transfer tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        if before["xym_micro"] <= transfer_micro:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        ensure_live_min_balance(wallet, transfer_micro + 1)
 
         manager = TransactionManager(wallet, wallet.node_url)
         currency_mosaic_id = manager.get_currency_mosaic_id()

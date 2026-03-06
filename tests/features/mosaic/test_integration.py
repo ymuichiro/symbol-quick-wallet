@@ -12,6 +12,25 @@ TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
 TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
 
 
+def _positive_env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _mosaic_min_balance_micro() -> int:
+    return _positive_env_int("SYMBOL_TEST_MOSAIC_MIN_BALANCE_MICRO", 50_000_000)
+
+
+def _is_insufficient_balance_error(exc: Exception) -> bool:
+    return "Failure_Core_Insufficient_Balance" in str(exc)
+
+
 @pytest.mark.integration
 class TestMosaicInfoIntegration:
     """Integration tests for mosaic info operations on testnet."""
@@ -138,33 +157,49 @@ class TestMosaicLiveTransaction:
 
     Requirements:
     - test key via --test-key-file (recommended) or SYMBOL_TEST_PRIVATE_KEY
-    - Account needs at least 1 XYM for mosaic creation test
+    - Account should have at least 50 XYM by default (override with SYMBOL_TEST_MOSAIC_MIN_BALANCE_MICRO)
     """
 
-    def test_live_create_mosaic_basic(self, loaded_testnet_wallet):
+    def test_live_create_mosaic_basic(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         """Test creating a basic mosaic on testnet."""
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live mosaic tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        min_balance = 1_000_000
-        if before["xym_micro"] < min_balance:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        min_balance = _mosaic_min_balance_micro()
+        available_before = ensure_live_min_balance(
+            wallet,
+            min_balance,
+            label="Insufficient balance for mosaic live test",
+        )
 
         tm = TransactionManager(wallet, wallet.node_url)
 
-        result = tm.create_sign_and_announce_mosaic(
-            supply=1000,
-            divisibility=0,
-            transferable=True,
-            supply_mutable=False,
-            revokable=False,
-            confirmation_timeout_seconds=confirm_timeout,
-            mosaic_registration_timeout_seconds=confirm_timeout,
-        )
+        try:
+            result = tm.create_sign_and_announce_mosaic(
+                supply=1000,
+                divisibility=0,
+                transferable=True,
+                supply_mutable=False,
+                revokable=False,
+                confirmation_timeout_seconds=confirm_timeout,
+                mosaic_registration_timeout_seconds=confirm_timeout,
+            )
+        except Exception as exc:
+            if _is_insufficient_balance_error(exc):
+                current_balance = int(
+                    wallet.get_xym_balance().get("xym_micro", available_before)
+                )
+                pytest.skip(
+                    "Insufficient balance during mosaic announce: "
+                    f"{current_balance} micro XYM (gate {min_balance}). "
+                    f"node_response={exc}"
+                )
+            raise
 
         tx_hash = result["hash"]
         assert len(tx_hash) == 64
@@ -176,30 +211,46 @@ class TestMosaicLiveTransaction:
         )
         assert confirmed["group"] == "confirmed"
 
-    def test_live_create_mosaic_with_divisibility(self, loaded_testnet_wallet):
+    def test_live_create_mosaic_with_divisibility(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         """Test creating a mosaic with divisibility on testnet."""
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live mosaic tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        min_balance = 1_000_000
-        if before["xym_micro"] < min_balance:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        min_balance = _mosaic_min_balance_micro()
+        available_before = ensure_live_min_balance(
+            wallet,
+            min_balance,
+            label="Insufficient balance for mosaic live test",
+        )
 
         tm = TransactionManager(wallet, wallet.node_url)
 
-        result = tm.create_sign_and_announce_mosaic(
-            supply=1_000_000,
-            divisibility=3,
-            transferable=True,
-            supply_mutable=True,
-            revokable=False,
-            confirmation_timeout_seconds=confirm_timeout,
-            mosaic_registration_timeout_seconds=confirm_timeout,
-        )
+        try:
+            result = tm.create_sign_and_announce_mosaic(
+                supply=1_000_000,
+                divisibility=3,
+                transferable=True,
+                supply_mutable=True,
+                revokable=False,
+                confirmation_timeout_seconds=confirm_timeout,
+                mosaic_registration_timeout_seconds=confirm_timeout,
+            )
+        except Exception as exc:
+            if _is_insufficient_balance_error(exc):
+                current_balance = int(
+                    wallet.get_xym_balance().get("xym_micro", available_before)
+                )
+                pytest.skip(
+                    "Insufficient balance during mosaic announce: "
+                    f"{current_balance} micro XYM (gate {min_balance}). "
+                    f"node_response={exc}"
+                )
+            raise
 
         tx_hash = result["hash"]
         assert len(tx_hash) == 64
@@ -211,30 +262,46 @@ class TestMosaicLiveTransaction:
         )
         assert confirmed["group"] == "confirmed"
 
-    def test_live_create_and_verify_mosaic(self, loaded_testnet_wallet):
+    def test_live_create_and_verify_mosaic(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         """Test creating a mosaic and verifying it exists on chain."""
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live mosaic tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        min_balance = 1_000_000
-        if before["xym_micro"] < min_balance:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        min_balance = _mosaic_min_balance_micro()
+        available_before = ensure_live_min_balance(
+            wallet,
+            min_balance,
+            label="Insufficient balance for mosaic live test",
+        )
 
         tm = TransactionManager(wallet, wallet.node_url)
 
-        result = tm.create_sign_and_announce_mosaic(
-            supply=5000,
-            divisibility=0,
-            transferable=True,
-            supply_mutable=True,
-            revokable=False,
-            confirmation_timeout_seconds=confirm_timeout,
-            mosaic_registration_timeout_seconds=confirm_timeout,
-        )
+        try:
+            result = tm.create_sign_and_announce_mosaic(
+                supply=5000,
+                divisibility=0,
+                transferable=True,
+                supply_mutable=True,
+                revokable=False,
+                confirmation_timeout_seconds=confirm_timeout,
+                mosaic_registration_timeout_seconds=confirm_timeout,
+            )
+        except Exception as exc:
+            if _is_insufficient_balance_error(exc):
+                current_balance = int(
+                    wallet.get_xym_balance().get("xym_micro", available_before)
+                )
+                pytest.skip(
+                    "Insufficient balance during mosaic announce: "
+                    f"{current_balance} micro XYM (gate {min_balance}). "
+                    f"node_response={exc}"
+                )
+            raise
 
         tx_hash = result["hash"]
         confirmed = wallet.wait_for_transaction_confirmation(

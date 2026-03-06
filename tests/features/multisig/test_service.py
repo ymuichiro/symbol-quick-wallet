@@ -506,17 +506,17 @@ class TestMultisigConversionIntegration:
         assert embedded is not None
         assert isinstance(embedded, sc.EmbeddedTransaction)
 
-    def test_live_initiate_multisig_transaction_and_confirm(self, real_wallet):
+    def test_live_initiate_multisig_transaction_and_confirm(
+        self, real_wallet, ensure_live_min_balance
+    ):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live multisig tests")
 
         wallet = real_wallet
-        before = wallet.get_xym_balance()
         transfer_micro = int(os.getenv("SYMBOL_TEST_TRANSFER_MICRO", "100000"))
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
 
-        if before["xym_micro"] <= transfer_micro:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        ensure_live_min_balance(wallet, transfer_micro + 1)
 
         service = MultisigService(wallet, wallet.node_url)
         currency_mosaic_id = wallet.get_currency_mosaic_id() or 0x72C0212E67A08BCE

@@ -383,15 +383,15 @@ class TestMetadataServiceReadIntegration:
 @pytest.mark.integration
 @pytest.mark.slow
 class TestMetadataServiceLiveIntegration:
-    def test_live_assign_and_remove_account_metadata(self, loaded_testnet_wallet):
+    def test_live_assign_and_remove_account_metadata(
+        self, loaded_testnet_wallet, ensure_live_min_balance
+    ):
         if os.getenv("SYMBOL_TEST_RUN_LIVE") != "1":
             pytest.skip("Set SYMBOL_TEST_RUN_LIVE=1 to run live metadata tests")
 
         wallet = loaded_testnet_wallet
-        before = wallet.get_xym_balance()
         min_balance = int(os.getenv("SYMBOL_TEST_METADATA_MIN_BALANCE_MICRO", "500000"))
-        if before["xym_micro"] < min_balance:
-            pytest.skip(f"Insufficient balance: {before['xym_micro']} micro XYM")
+        ensure_live_min_balance(wallet, min_balance)
 
         confirm_timeout = int(os.getenv("SYMBOL_TEST_CONFIRM_TIMEOUT", "300"))
         manager = TransactionManager(wallet, wallet.node_url)

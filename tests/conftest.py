@@ -1,8 +1,10 @@
 import os
-import pytest
-import requests
 import tempfile
 from pathlib import Path
+from typing import Any, Callable
+
+import pytest
+import requests
 from symbolchain.CryptoTypes import PrivateKey
 from symbolchain.facade.SymbolFacade import SymbolFacade
 
@@ -10,6 +12,20 @@ from src.wallet import Wallet
 
 TESTNET_NODE = "http://sym-test-01.opening-line.jp:3000"
 TESTNET_XYM_MOSAIC_ID = 0x72C0212E67A08BCE
+
+
+def _test_key_address_sidecar(key_file: Path) -> Path:
+    return key_file.with_name(f"{key_file.name}.address")
+
+
+def _read_expected_address_from_sidecar(test_key_file: Path | None) -> str | None:
+    if test_key_file is None:
+        return None
+    sidecar = _test_key_address_sidecar(test_key_file)
+    if not sidecar.exists():
+        return None
+    expected = sidecar.read_text().strip().upper()
+    return expected or None
 
 
 def _iter_testnet_node_candidates() -> list[str]:
@@ -62,11 +78,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Fail instead of skip when live-key fixtures are requested but unavailable",
     )
+    parser.addoption(
+        "--expected-test-address",
+        action="store",
+        default="",
+        help=(
+            "Expected address for the live test key. "
+            "If set, tests fail when the loaded key resolves to a different address."
+        ),
+    )
 
 
 @pytest.fixture
 def test_key_file(request: pytest.FixtureRequest) -> Path | None:
-    key_file = Path(request.config.getoption("--test-key-file"))
+    key_file = Path(request.config.getoption("--test-key-file")).expanduser()
     if not key_file.exists():
         return None
     return key_file
@@ -75,6 +100,18 @@ def test_key_file(request: pytest.FixtureRequest) -> Path | None:
 @pytest.fixture
 def require_live_key(request: pytest.FixtureRequest) -> bool:
     return bool(request.config.getoption("--require-live-key"))
+
+
+@pytest.fixture
+def expected_test_address(request: pytest.FixtureRequest) -> str | None:
+    option_value = str(request.config.getoption("--expected-test-address", "")).strip()
+    if option_value:
+        return option_value.upper()
+
+    env_value = os.getenv("SYMBOL_TEST_EXPECTED_ADDRESS", "").strip()
+    if env_value:
+        return env_value.upper()
+    return None
 
 
 @pytest.fixture
@@ -110,7 +147,9 @@ def testnet_wallet():
 
 @pytest.fixture
 def loaded_testnet_wallet(
+    test_key_file: Path | None,
     test_private_key: PrivateKey | None,
+    expected_test_address: str | None,
     require_live_key: bool,
 ):
     """Fixture providing a loaded testnet wallet with private key from --test-key-file."""
@@ -133,7 +172,51 @@ def loaded_testnet_wallet(
     account = wallet.facade.create_account(wallet.private_key)
     wallet.public_key = account.public_key
     wallet.address = account.address
+
+    actual_address = str(wallet.address).upper()
+    expected_from_sidecar = _read_expected_address_from_sidecar(test_key_file)
+
+    if (
+        expected_test_address is not None
+        and expected_from_sidecar is not None
+        and expected_test_address != expected_from_sidecar
+    ):
+        pytest.fail(
+            "Mismatch between --expected-test-address/SYMBOL_TEST_EXPECTED_ADDRESS "
+            f"({expected_test_address}) and key sidecar "
+            f"({_test_key_address_sidecar(test_key_file)}) value ({expected_from_sidecar})."
+        )
+
+    for expected in [expected_test_address, expected_from_sidecar]:
+        if expected is None:
+            continue
+        if actual_address != expected:
+            pytest.fail(
+                "Live test key address mismatch. "
+                f"expected={expected} actual={actual_address}"
+            )
+
     return wallet
+
+
+@pytest.fixture
+def ensure_live_min_balance() -> Callable[..., int]:
+    """Return a helper that skips live tests when account balance is below threshold."""
+
+    def _ensure(
+        wallet: Any,
+        min_balance_micro: int,
+        *,
+        label: str = "Insufficient balance",
+    ) -> int:
+        before = wallet.get_xym_balance()
+        available = int(before.get("xym_micro", 0))
+        required = max(int(min_balance_micro), 0)
+        if available < required:
+            pytest.skip(f"{label}: {available} micro XYM (need {required})")
+        return available
+
+    return _ensure
 
 
 @pytest.fixture

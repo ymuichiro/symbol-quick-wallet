@@ -195,12 +195,14 @@ class AggregateService:
         lock_amount: int = HASH_LOCK_AMOUNT,
         duration: int = HASH_LOCK_DURATION,
         fee_multiplier: int = 100,
+        aggregate_hash: str | None = None,
     ) -> sc.Transaction:
         """Create a hash lock transaction for aggregate bonded.
 
         The hash lock locks funds to allow announcing the aggregate bonded transaction.
         """
-        aggregate_hash = self.facade.hash_transaction(aggregate_tx)
+        if aggregate_hash is None:
+            aggregate_hash = str(self.facade.hash_transaction(aggregate_tx))
 
         currency_mosaic_id = self.wallet.get_currency_mosaic_id() or 0x6BED913FA20223F8
 
@@ -212,7 +214,7 @@ class AggregateService:
             "deadline": deadline_timestamp,
             "mosaic": {"mosaic_id": currency_mosaic_id, "amount": lock_amount},
             "duration": duration,
-            "hash": aggregate_hash.bytes,
+            "hash": bytes.fromhex(aggregate_hash.strip().upper()),
         }
 
         tx = self.facade.transaction_factory.create(hash_lock_dict)
@@ -241,6 +243,13 @@ class AggregateService:
     ) -> str:
         """Attach signature to transaction and return JSON payload."""
         return self.facade.transaction_factory.attach_signature(transaction, signature)
+
+    def calculate_transaction_hash_from_signed_payload(self, signed_payload: str) -> str:
+        """Calculate transaction hash from signed payload JSON."""
+        payload_obj = json.loads(signed_payload)
+        payload_hex = payload_obj["payload"]
+        signed_tx = sc.TransactionFactory.deserialize(bytes.fromhex(payload_hex))
+        return str(self.facade.hash_transaction(signed_tx))
 
     def attach_cosignature(
         self, transaction: sc.Transaction, cosignature: sc.Cosignature
@@ -544,10 +553,18 @@ class AggregateService:
         3. Announce aggregate bonded transaction
         """
         aggregate_tx = self.create_aggregate_bonded(inner_txs, fee_multiplier)
-        aggregate_hash = self.calculate_transaction_hash(aggregate_tx)
+        aggregate_sig = self.sign_transaction(aggregate_tx)
+        aggregate_payload = self.attach_signature(aggregate_tx, aggregate_sig)
+        aggregate_hash = self.calculate_transaction_hash_from_signed_payload(
+            aggregate_payload
+        )
 
         hash_lock_tx = self.create_hash_lock(
-            aggregate_tx, lock_amount, HASH_LOCK_DURATION, fee_multiplier
+            aggregate_tx,
+            lock_amount,
+            HASH_LOCK_DURATION,
+            fee_multiplier,
+            aggregate_hash=aggregate_hash,
         )
 
         hash_lock_sig = self.sign_transaction(hash_lock_tx)
@@ -567,9 +584,6 @@ class AggregateService:
                 on_status_update("hash_lock", "Waiting for hash lock confirmation...")
 
             self._wait_for_confirmation(hash_lock_hash, timeout_seconds)
-
-        aggregate_sig = self.sign_transaction(aggregate_tx)
-        aggregate_payload = self.attach_signature(aggregate_tx, aggregate_sig)
 
         if on_status_update:
             on_status_update("aggregate", "Announcing aggregate bonded transaction...")

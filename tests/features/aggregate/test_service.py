@@ -246,6 +246,27 @@ class TestCreateHashLock:
         )
         assert hash_lock is not None
 
+    def test_create_hash_lock_uses_explicit_aggregate_hash(
+        self, aggregate_service, mock_wallet
+    ):
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+        inner_tx = aggregate_service.create_embedded_transfer(
+            signer_public_key=mock_wallet.public_key,
+            recipient_address=recipient,
+            mosaics=[],
+            message="",
+        )
+        aggregate = aggregate_service.create_aggregate_bonded([inner_tx])
+        explicit_hash = "A" * 64
+
+        hash_lock = aggregate_service.create_hash_lock(
+            aggregate,
+            aggregate_hash=explicit_hash,
+        )
+
+        assert hash_lock is not None
+        assert str(hash_lock.hash) == explicit_hash
+
 
 class TestTransactionSigning:
     def test_sign_transaction(self, aggregate_service, mock_wallet):
@@ -286,6 +307,28 @@ class TestTransactionHash:
         tx_hash = aggregate_service.calculate_transaction_hash(aggregate)
         assert tx_hash is not None
         assert len(tx_hash) == 64
+
+    def test_calculate_transaction_hash_from_signed_payload(
+        self, aggregate_service, mock_wallet
+    ):
+        recipient = "TBTZK5C5LQZSH7HGWOY4L6UBQGHIQ6QQHRTHRBX"
+        inner_tx = aggregate_service.create_embedded_transfer(
+            signer_public_key=mock_wallet.public_key,
+            recipient_address=recipient,
+            mosaics=[],
+            message="",
+        )
+        aggregate = aggregate_service.create_aggregate_complete([inner_tx])
+        signature = aggregate_service.sign_transaction(aggregate)
+        signed_payload = aggregate_service.attach_signature(aggregate, signature)
+
+        payload_hash = aggregate_service.calculate_transaction_hash_from_signed_payload(
+            signed_payload
+        )
+        tx_hash = aggregate_service.calculate_transaction_hash(aggregate)
+
+        assert len(payload_hash) == 64
+        assert payload_hash == tx_hash
 
 
 class TestFeeCalculation:

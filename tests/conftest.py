@@ -65,6 +65,84 @@ def _select_reachable_testnet_node() -> str:
     return TESTNET_NODE
 
 
+def _normalize_mosaic_hex(mosaic_id: object) -> str:
+    if isinstance(mosaic_id, int):
+        return f"{mosaic_id:016X}"
+    raw = str(mosaic_id).strip().upper()
+    if raw.startswith("0X"):
+        raw = raw[2:]
+    return raw
+
+
+def _estimate_spendable_xym_micro(
+    wallet: Any,
+    total_xym_micro: int,
+) -> tuple[int, int]:
+    """Estimate spendable XYM by subtracting active hash locks from total balance.
+
+    Returns a tuple: (estimated_spendable_micro, active_locked_micro).
+    """
+    node_url = str(getattr(wallet, "node_url", "")).strip().rstrip("/")
+    if not node_url:
+        return total_xym_micro, 0
+
+    address_value = getattr(wallet, "address", "")
+    normalized_address = str(address_value).replace("-", "").strip().upper()
+    if not normalized_address:
+        return total_xym_micro, 0
+
+    try:
+        chain_info = requests.get(f"{node_url}/chain/info", timeout=(3, 10)).json()
+        chain_height = int(chain_info.get("height", "0"))
+
+        locks_response = requests.get(
+            f"{node_url}/lock/hash",
+            params={"address": normalized_address, "pageSize": 100},
+            timeout=(3, 10),
+        ).json()
+        locks_data = (
+            locks_response.get("data", []) if isinstance(locks_response, dict) else []
+        )
+
+        currency_mosaic_id = (
+            wallet.get_currency_mosaic_id()
+            if hasattr(wallet, "get_currency_mosaic_id")
+            else TESTNET_XYM_MOSAIC_ID
+        )
+        target_mosaic = _normalize_mosaic_hex(currency_mosaic_id or TESTNET_XYM_MOSAIC_ID)
+
+        active_locked = 0
+        for entry in locks_data:
+            if not isinstance(entry, dict):
+                continue
+            lock = entry.get("lock", {})
+            if not isinstance(lock, dict):
+                continue
+
+            try:
+                status = int(lock.get("status", 1))
+                amount = int(lock.get("amount", "0"))
+                end_height = int(lock.get("endHeight", "0"))
+            except Exception:
+                continue
+
+            mosaic_hex = _normalize_mosaic_hex(lock.get("mosaicId", ""))
+            if mosaic_hex and mosaic_hex != target_mosaic:
+                continue
+            if status != 0:
+                continue
+            if chain_height and end_height and end_height < chain_height:
+                continue
+            if amount <= 0:
+                continue
+            active_locked += amount
+
+        spendable = max(total_xym_micro - active_locked, 0)
+        return spendable, active_locked
+    except Exception:
+        return total_xym_micro, 0
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--test-key-file",
@@ -175,16 +253,18 @@ def loaded_testnet_wallet(
 
     actual_address = str(wallet.address).upper()
     expected_from_sidecar = _read_expected_address_from_sidecar(test_key_file)
+    sidecar_path = _test_key_address_sidecar(test_key_file) if test_key_file else None
 
     if (
         expected_test_address is not None
         and expected_from_sidecar is not None
+        and sidecar_path is not None
         and expected_test_address != expected_from_sidecar
     ):
         pytest.fail(
             "Mismatch between --expected-test-address/SYMBOL_TEST_EXPECTED_ADDRESS "
             f"({expected_test_address}) and key sidecar "
-            f"({_test_key_address_sidecar(test_key_file)}) value ({expected_from_sidecar})."
+            f"({sidecar_path}) value ({expected_from_sidecar})."
         )
 
     for expected in [expected_test_address, expected_from_sidecar]:
@@ -210,10 +290,14 @@ def ensure_live_min_balance() -> Callable[..., int]:
         label: str = "Insufficient balance",
     ) -> int:
         before = wallet.get_xym_balance()
-        available = int(before.get("xym_micro", 0))
+        total = int(before.get("xym_micro", 0))
+        available, locked = _estimate_spendable_xym_micro(wallet, total)
         required = max(int(min_balance_micro), 0)
         if available < required:
-            pytest.skip(f"{label}: {available} micro XYM (need {required})")
+            pytest.skip(
+                f"{label}: spendable={available} micro XYM "
+                f"(total={total}, active_locked={locked}, need {required})"
+            )
         return available
 
     return _ensure
